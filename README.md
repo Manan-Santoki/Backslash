@@ -80,6 +80,9 @@ COMPILE_TIMEOUT=120
 
 # Registration
 DISABLE_SIGNUP=false
+
+# Set to true if behind HTTPS (reverse proxy with TLS)
+SECURE_COOKIES=false
 ```
 
 | Variable | Default | Description |
@@ -92,6 +95,7 @@ DISABLE_SIGNUP=false
 | `MAX_CONCURRENT_BUILDS` | `5` | Maximum simultaneous compilations |
 | `COMPILE_TIMEOUT` | `120` | Compilation timeout in seconds |
 | `DISABLE_SIGNUP` | `false` | Set to `true` to disable new user registration |
+| `SECURE_COOKIES` | `false` | Set to `true` if serving over HTTPS (reverse proxy with TLS) |
 
 ---
 
@@ -191,8 +195,8 @@ If you want to contribute or run Backslash locally for development:
 **1. Clone and install:**
 
 ```bash
-git clone https://github.com/your-username/backslash.git
-cd backslash
+git clone https://github.com/Manan-Santoki/Backslash.git
+cd Backslash
 ```
 
 **2. Start dev services (PostgreSQL + Redis):**
