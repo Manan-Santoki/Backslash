@@ -50,6 +50,7 @@ services:
       - COMPILE_TIMEOUT=${COMPILE_TIMEOUT:-120}
       - SESSION_SECRET=${SESSION_SECRET:-change-me-to-a-random-64-char-string}
       - DISABLE_SIGNUP=${DISABLE_SIGNUP:-false}
+      - SECURE_COOKIES=${SECURE_COOKIES:-false}
       - PROJECTS_VOLUME=backslash-project-data
     volumes:
       - project-data:/data/backslash
