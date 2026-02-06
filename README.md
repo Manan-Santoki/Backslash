@@ -37,24 +37,65 @@
 ### Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and [Docker Compose](https://docs.docker.com/compose/install/)
+- A PostgreSQL database — either use the **built-in** Docker container or an **external** hosted instance (Neon, Supabase, Railway, your own server, etc.)
 
-### Deploy
+### Option A — External / Hosted PostgreSQL (recommended)
+
+If you already have a PostgreSQL database (e.g. Neon, Supabase, AWS RDS, or a remote server):
 
 ```bash
 git clone https://github.com/your-username/leafedit.git
 cd leafedit
-cp .env.example .env     # Edit if you want to change passwords/ports
+cp .env.example .env
+```
+
+Edit `.env` and set your `DATABASE_URL`:
+
+```env
+DATABASE_URL=postgresql://user:password@your-host:5432/leafedit
+SESSION_SECRET=change-me-to-a-random-64-char-string
+```
+
+Then start:
+
+```bash
 docker compose up -d
 ```
 
-**That's it.** Open [http://localhost:3000](http://localhost:3000) and create your account.
+### Option B — Built-in PostgreSQL via Docker
+
+If you want Docker Compose to manage PostgreSQL for you:
+
+```bash
+git clone https://github.com/your-username/leafedit.git
+cd leafedit
+cp .env.example .env
+```
+
+Edit `.env` and set your postgres credentials (leave `DATABASE_URL` commented out):
+
+```env
+POSTGRES_USER=leafedit
+POSTGRES_PASSWORD=change-me-to-a-strong-password
+POSTGRES_DB=leafedit
+SESSION_SECRET=change-me-to-a-random-64-char-string
+```
+
+Then start with the `postgres` profile:
+
+```bash
+docker compose --profile postgres up -d
+```
+
+### That's it
+
+Open [http://localhost:3000](http://localhost:3000) and create your account.
 
 Docker Compose automatically:
 - Builds the TeX Live compiler image
-- Starts PostgreSQL 16 with persistent storage
 - Starts Redis 7 for caching and job queuing
 - Builds and launches the web application
-- Runs database migrations on first startup
+- *(Profile postgres)* Starts PostgreSQL 16 with persistent storage
 
 ### Environment Variables
 
@@ -65,7 +106,10 @@ Create a `.env` file in the project root (or edit the one from `.env.example`):
 PORT=3000
 SESSION_SECRET=change-me-to-a-random-64-char-string
 
-# Database (auto-managed by Docker Compose)
+# Database — pick ONE of:
+# Option A: External database
+DATABASE_URL=postgresql://user:password@your-host:5432/leafedit
+# Option B: Built-in Docker PostgreSQL (use --profile postgres)
 POSTGRES_USER=leafedit
 POSTGRES_PASSWORD=leafedit
 POSTGRES_DB=leafedit
@@ -84,9 +128,10 @@ DISABLE_SIGNUP=false
 |---|---|---|
 | `PORT` | `3000` | Port the web app listens on |
 | `SESSION_SECRET` | — | Secret key for signing session tokens (**required**) |
-| `POSTGRES_USER` | `leafedit` | PostgreSQL username |
-| `POSTGRES_PASSWORD` | `leafedit` | PostgreSQL password |
-| `POSTGRES_DB` | `leafedit` | PostgreSQL database name |
+| `DATABASE_URL` | — | Full PostgreSQL connection string (if using external DB) |
+| `POSTGRES_USER` | `leafedit` | PostgreSQL username (if using built-in DB) |
+| `POSTGRES_PASSWORD` | `leafedit` | PostgreSQL password (if using built-in DB) |
+| `POSTGRES_DB` | `leafedit` | PostgreSQL database name (if using built-in DB) |
 | `COMPILE_MEMORY` | `1g` | Memory limit per compile container |
 | `COMPILE_CPUS` | `1.5` | CPU limit per compile container |
 | `MAX_CONCURRENT_BUILDS` | `5` | Maximum simultaneous compilations |

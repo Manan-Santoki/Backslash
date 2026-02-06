@@ -10,9 +10,14 @@ services:
     entrypoint: ["true"]
     restart: "no"
 
-  # ── PostgreSQL Database ────────────────────────────
+  # ── PostgreSQL Database (optional) ─────────────────
+  # Remove or comment out this service if you use an
+  # external / hosted database. Set DATABASE_URL in .env
+  # to point at your remote PostgreSQL instance instead.
   postgres:
     image: postgres:16-alpine
+    profiles:
+      - postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-leafedit}
       POSTGRES_USER: ${POSTGRES_USER:-leafedit}
@@ -25,6 +30,8 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - leafedit
     restart: unless-stopped
 
   # ── Web Application ────────────────────────────────
@@ -34,7 +41,7 @@ services:
       dockerfile: apps/web/Dockerfile
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://${POSTGRES_USER:-leafedit}:${POSTGRES_PASSWORD:-leafedit}@postgres:5432/${POSTGRES_DB:-leafedit}
+      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-leafedit}:${POSTGRES_PASSWORD:-leafedit}@postgres:5432/${POSTGRES_DB:-leafedit}}
       - REDIS_URL=redis://redis:6379
       - STORAGE_PATH=/data/leafedit
       - TEMPLATES_PATH=/app/templates
@@ -51,10 +58,10 @@ services:
     depends_on:
       compiler-image:
         condition: service_completed_successfully
-      postgres:
-        condition: service_healthy
       redis:
         condition: service_healthy
+    networks:
+      - leafedit
     restart: unless-stopped
 
   # ── Redis ──────────────────────────────────────────
@@ -68,7 +75,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - leafedit
     restart: unless-stopped
+
+networks:
+  leafedit:
+    driver: bridge
 
 volumes:
   postgres-data:
