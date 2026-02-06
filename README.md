@@ -147,18 +147,30 @@ LeafEdit includes a full REST API for programmatic access. Generate an API key f
 ### Quick Start
 
 ```bash
-# Compile a LaTeX string to PDF in one request
+# Upload a .tex file and get a compiled PDF back
+curl -X POST https://your-instance.com/api/v1/compile \
+  -H "Authorization: Bearer le_YOUR_API_KEY" \
+  -F "file=@document.tex" \
+  --output output.pdf
+
+# Or get the result as base64 JSON
+curl -X POST "https://your-instance.com/api/v1/compile?format=base64" \
+  -H "Authorization: Bearer le_YOUR_API_KEY" \
+  -F "file=@document.tex"
+
+# JSON body also works (source as a string)
 curl -X POST https://your-instance.com/api/v1/compile \
   -H "Authorization: Bearer le_YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"source": "\\documentclass{article}\n\\begin{document}\nHello!\n\\end{document}"}'
+  -d '{"source": "\\documentclass{article}\n\\begin{document}\nHello!\n\\end{document}"}' \
+  --output output.pdf
 ```
 
 ### API Endpoints
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/v1/compile` | One-shot LaTeX → PDF compilation |
+| `POST` | `/api/v1/compile` | One-shot compile — upload `.tex` file or send JSON, get PDF back |
 | `GET` | `/api/v1/projects` | List all projects |
 | `POST` | `/api/v1/projects` | Create a project from template |
 | `GET` | `/api/v1/projects/:id` | Get project details + files |

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useMemo } from "react";
 import Link from "next/link";
 import {
   Copy,
@@ -253,48 +253,87 @@ function EndpointCard({ endpoint }: { endpoint: Endpoint }) {
 
 // ─── Endpoint Sections Data ─────────────────────────
 
-const BASE = "/api/v1";
+function getSections(origin: string): EndpointSection[] {
+  const BASE = `${origin}/api/v1`;
 
-const sections: EndpointSection[] = [
+  return [
   {
     title: "One-Shot Compilation",
     icon: <Zap className="h-5 w-5" />,
     description:
-      "Compile a LaTeX source string to PDF in a single request. No project needed.",
+      "Upload a .tex file (or send LaTeX source as JSON) and get back a compiled PDF. No project needed.",
     endpoints: [
       {
         method: "POST",
         path: `${BASE}/compile`,
         description:
-          "Compile raw LaTeX source to PDF. Returns base64-encoded PDF and logs.",
+          "Compile LaTeX to PDF. Accepts a .tex file upload (multipart/form-data) or JSON body. Returns raw PDF by default.",
         auth: true,
         body: {
+          file: {
+            type: "file (.tex)",
+            required: false,
+            description:
+              "A .tex file to compile (multipart/form-data). Use this OR the JSON 'source' field.",
+          },
           source: {
             type: "string",
-            required: true,
+            required: false,
             description:
-              "The LaTeX source code to compile. Maximum 5 MB.",
+              "LaTeX source code as a string (JSON body). Use this OR the 'file' field. Max 5 MB.",
           },
           engine: {
             type: "string",
             required: false,
             description:
-              'Compilation engine. Options: "pdflatex", "xelatex", "lualatex". Default: "pdflatex".',
+              'Compilation engine: "pdflatex", "xelatex", "lualatex". Default: "pdflatex". Also accepted as a query param.',
           },
         },
-        response: `{
+        query: {
+          format: {
+            type: "string",
+            required: false,
+            description:
+              '"pdf" (default) — raw binary PDF. "base64" or "json" — JSON with base64 pdf, logs, errors, durationMs.',
+          },
+          engine: {
+            type: "string",
+            required: false,
+            description:
+              'Override engine via query param. Same options as body field.',
+          },
+        },
+        response: `# Default (?format=pdf): raw application/pdf binary
+# Response headers include:
+#   X-Compile-Duration-Ms, X-Compile-Warnings, X-Compile-Errors
+
+# With ?format=base64 or ?format=json:
+{
   "pdf": "JVBERi0xLjQK... (base64)",
   "logs": "This is pdfTeX, Version 3.14...",
   "errors": [],
   "durationMs": 3200
 }`,
-        curl: `curl -X POST ${BASE}/compile \\
+        curl: `# Upload a .tex file → get raw PDF back
+curl -X POST ${BASE}/compile \\
+  -H "Authorization: Bearer le_YOUR_API_KEY" \\
+  -F "file=@document.tex" \\
+  -F "engine=pdflatex" \\
+  --output output.pdf
+
+# Upload a .tex file → get base64 JSON response
+curl -X POST "${BASE}/compile?format=base64" \\
+  -H "Authorization: Bearer le_YOUR_API_KEY" \\
+  -F "file=@document.tex"
+
+# JSON body (still supported)
+curl -X POST ${BASE}/compile \\
   -H "Authorization: Bearer le_YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{
-    "source": "\\\\documentclass{article}\\n\\\\begin{document}\\nHello, World!\\n\\\\end{document}",
-    "engine": "pdflatex"
-  }'`,
+  -d '{"source": "\\\\documentclass{article}\\n\\\\begin{document}\\nHello!\\n\\\\end{document}"}' \\
+  --output output.pdf`,
+        notes:
+          "Tip: Use file upload for real documents — no need to escape backslashes. The default response is a raw PDF blob you can pipe straight to a file.",
       },
     ],
   },
@@ -626,11 +665,12 @@ const sections: EndpointSection[] = [
       },
     ],
   },
-];
+  ];
+}
 
 // ─── Table of Contents ──────────────────────────────
 
-function TableOfContents() {
+function TableOfContents({ sections }: { sections: EndpointSection[] }) {
   return (
     <nav className="hidden lg:block sticky top-24 w-56 shrink-0">
       <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wider mb-3">
@@ -671,6 +711,14 @@ function TableOfContents() {
 // ─── API Docs Page ──────────────────────────────────
 
 export default function ApiDocsPage() {
+  const [origin, setOrigin] = useState("https://your-instance.com");
+
+  useEffect(() => {
+    setOrigin(window.location.origin);
+  }, []);
+
+  const sections = useMemo(() => getSections(origin), [origin]);
+
   return (
     <div className="flex gap-8">
       {/* Main content */}
@@ -837,7 +885,7 @@ export default function ApiDocsPage() {
       </div>
 
       {/* Sidebar TOC */}
-      <TableOfContents />
+      <TableOfContents sections={sections} />
     </div>
   );
 }
