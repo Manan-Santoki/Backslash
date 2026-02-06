@@ -56,11 +56,16 @@ services:
     volumes:
       - project-data:/data/backslash
       - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "${PORT:-3000}:3000"
     depends_on:
       compiler-image:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
     networks:
       - backslash
     restart: unless-stopped
@@ -68,7 +73,7 @@ services:
   # ── Redis ──────────────────────────────────────────
   redis:
     image: redis:7-alpine
-    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    command: redis-server --appendonly yes --maxmemory-policy noeviction
     volumes:
       - redis-data:/data
     healthcheck:

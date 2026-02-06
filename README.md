@@ -44,12 +44,12 @@
 If you already have a PostgreSQL database (e.g. Neon, Supabase, AWS RDS, or a remote server):
 
 ```bash
-git clone https://github.com/your-username/backslash.git
-cd backslash
+git clone https://github.com/Manan-Santoki/Backslash.git
+cd Backslash
 cp .env.example .env
 ```
 
-Edit `.env` and set your `DATABASE_URL`:
+Edit `.env` — you **must** set `DATABASE_URL` and `SESSION_SECRET`:
 
 ```env
 DATABASE_URL=postgresql://user:password@your-host:5432/backslash
@@ -64,37 +64,37 @@ docker compose up -d
 
 ### Option B — Built-in PostgreSQL via Docker
 
-If you want Docker Compose to manage PostgreSQL for you:
+If you want Docker Compose to run PostgreSQL for you:
 
 ```bash
-git clone https://github.com/your-username/backslash.git
-cd backslash
+git clone https://github.com/Manan-Santoki/Backslash.git
+cd Backslash
 cp .env.example .env
 ```
 
-Edit `.env` and set your postgres credentials (leave `DATABASE_URL` commented out):
+Edit `.env` — set `DATABASE_URL` to the Docker-internal postgres and set `SESSION_SECRET`:
 
 ```env
-POSTGRES_USER=backslash
-POSTGRES_PASSWORD=change-me-to-a-strong-password
-POSTGRES_DB=backslash
+DATABASE_URL=postgresql://backslash:backslash@postgres:5432/backslash
 SESSION_SECRET=change-me-to-a-random-64-char-string
 ```
 
-Then start with the `postgres` profile:
+Then start with the `postgres` profile (this tells Docker Compose to also start PostgreSQL):
 
 ```bash
 docker compose --profile postgres up -d
 ```
 
+> **Why `--profile postgres`?** By default, only the app + Redis start. The `--profile postgres` flag additionally starts a PostgreSQL 16 container. If you forget it, you'll get a database connection error.
+
 ### That's it
 
-Open [http://localhost:3000](http://localhost:3000) and create your account.
+Open [http://localhost:3000](http://localhost:3000) (or whichever `PORT` you set) and create your account.
 
 Docker Compose automatically:
-- Builds the TeX Live compiler image
-- Starts Redis 7 for caching and job queuing
-- Builds and launches the web application
+- Builds the TeX Live compiler image (~2–5 min on first run)
+- Starts Redis 7 for job queuing
+- Builds and launches the web application on port 3000
 - *(Profile postgres)* Starts PostgreSQL 16 with persistent storage
 
 ### Environment Variables
@@ -102,17 +102,15 @@ Docker Compose automatically:
 Create a `.env` file in the project root (or edit the one from `.env.example`):
 
 ```env
-# Server
+# Host port (the container always listens on 3000 internally)
 PORT=3000
 SESSION_SECRET=change-me-to-a-random-64-char-string
 
-# Database — pick ONE of:
+# Database — REQUIRED. Pick one:
 # Option A: External database
 DATABASE_URL=postgresql://user:password@your-host:5432/backslash
 # Option B: Built-in Docker PostgreSQL (use --profile postgres)
-POSTGRES_USER=backslash
-POSTGRES_PASSWORD=backslash
-POSTGRES_DB=backslash
+# DATABASE_URL=postgresql://backslash:backslash@postgres:5432/backslash
 
 # Compilation (optional)
 COMPILE_MEMORY=1g
@@ -126,12 +124,9 @@ DISABLE_SIGNUP=false
 
 | Variable | Default | Description |
 |---|---|---|
-| `PORT` | `3000` | Port the web app listens on |
+| `PORT` | `3000` | Host port to expose the app on (container always listens on 3000) |
 | `SESSION_SECRET` | — | Secret key for signing session tokens (**required**) |
-| `DATABASE_URL` | — | Full PostgreSQL connection string (if using external DB) |
-| `POSTGRES_USER` | `backslash` | PostgreSQL username (if using built-in DB) |
-| `POSTGRES_PASSWORD` | `backslash` | PostgreSQL password (if using built-in DB) |
-| `POSTGRES_DB` | `backslash` | PostgreSQL database name (if using built-in DB) |
+| `DATABASE_URL` | — | Full PostgreSQL connection string (**required**) |
 | `COMPILE_MEMORY` | `1g` | Memory limit per compile container |
 | `COMPILE_CPUS` | `1.5` | CPU limit per compile container |
 | `MAX_CONCURRENT_BUILDS` | `5` | Maximum simultaneous compilations |
