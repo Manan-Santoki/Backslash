@@ -41,7 +41,7 @@ services:
       dockerfile: apps/web/Dockerfile
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-postgresql://${POSTGRES_USER:-leafedit}:${POSTGRES_PASSWORD:-leafedit}@postgres:5432/${POSTGRES_DB:-leafedit}}
+      - DATABASE_URL=${DATABASE_URL}
       - REDIS_URL=redis://redis:6379
       - STORAGE_PATH=/data/leafedit
       - TEMPLATES_PATH=/app/templates
