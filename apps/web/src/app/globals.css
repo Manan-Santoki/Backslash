@@ -1,0 +1,193 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
+  --font-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+  --radius-xl: 0.75rem;
+
+  --animate-fade-in: fadeIn 0.2s ease-out;
+  --animate-slide-up: slideUp 0.2s ease-out;
+  --animate-progress: progress 2s ease-in-out infinite;
+
+  /* Token colors — resolved from CSS custom props set by [data-theme] */
+  --color-bg-primary: var(--theme-bg-primary);
+  --color-bg-secondary: var(--theme-bg-secondary);
+  --color-bg-tertiary: var(--theme-bg-tertiary);
+  --color-bg-elevated: var(--theme-bg-elevated);
+  --color-border: var(--theme-border);
+  --color-text-primary: var(--theme-text-primary);
+  --color-text-secondary: var(--theme-text-secondary);
+  --color-text-muted: var(--theme-text-muted);
+  --color-accent: var(--theme-accent);
+  --color-accent-hover: var(--theme-accent-hover);
+  --color-success: var(--theme-success);
+  --color-error: var(--theme-error);
+  --color-warning: var(--theme-warning);
+
+  --color-editor-bg: var(--theme-editor-bg);
+  --color-editor-gutter: var(--theme-editor-gutter);
+  --color-editor-line-hl: var(--theme-editor-line-hl);
+  --color-editor-selection: var(--theme-editor-selection);
+}
+
+/* ─── Dark theme (Catppuccin Mocha) ──────────────── */
+[data-theme="dark"] {
+  --theme-bg-primary: #1e1e2e;
+  --theme-bg-secondary: #181825;
+  --theme-bg-tertiary: #11111b;
+  --theme-bg-elevated: #313244;
+  --theme-border: #45475a;
+  --theme-text-primary: #cdd6f4;
+  --theme-text-secondary: #a6adc8;
+  --theme-text-muted: #6c7086;
+  --theme-accent: #89b4fa;
+  --theme-accent-hover: #74c7ec;
+  --theme-success: #a6e3a1;
+  --theme-error: #f38ba8;
+  --theme-warning: #fab387;
+
+  --theme-editor-bg: #1e1e2e;
+  --theme-editor-gutter: #181825;
+  --theme-editor-line-hl: #2a2b3d;
+  --theme-editor-selection: rgba(137, 180, 250, 0.3);
+
+  --theme-pdf-shadow: rgba(0, 0, 0, 0.3);
+
+  color-scheme: dark;
+}
+
+/* ─── Light theme (Catppuccin Latte) ─────────────── */
+[data-theme="light"] {
+  --theme-bg-primary: #eff1f5;
+  --theme-bg-secondary: #e6e9ef;
+  --theme-bg-tertiary: #dce0e8;
+  --theme-bg-elevated: #ccd0da;
+  --theme-border: #bcc0cc;
+  --theme-text-primary: #4c4f69;
+  --theme-text-secondary: #5c5f77;
+  --theme-text-muted: #8c8fa1;
+  --theme-accent: #1e66f5;
+  --theme-accent-hover: #2a6ef5;
+  --theme-success: #40a02b;
+  --theme-error: #d20f39;
+  --theme-warning: #fe640b;
+
+  --theme-editor-bg: #eff1f5;
+  --theme-editor-gutter: #e6e9ef;
+  --theme-editor-line-hl: #dce0e8;
+  --theme-editor-selection: #acb0be;
+
+  --theme-pdf-shadow: rgba(0, 0, 0, 0.1);
+
+  color-scheme: light;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes progress {
+  0% { transform: translateX(-100%); }
+  50% { transform: translateX(0%); }
+  100% { transform: translateX(100%); }
+}
+
+* {
+  border-color: var(--color-border);
+}
+
+body {
+  background-color: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-sans);
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-muted);
+}
+
+/* CodeMirror overrides */
+.cm-editor {
+  height: 100% !important;
+  font-size: 14px;
+}
+
+.cm-editor .cm-content {
+  font-family: var(--font-mono);
+}
+
+.cm-editor .cm-gutters {
+  background-color: var(--color-editor-gutter);
+  border-right: 1px solid var(--color-border);
+}
+
+.cm-editor .cm-activeLineGutter,
+.cm-editor .cm-activeLine {
+  background-color: var(--color-editor-line-hl);
+}
+
+/* react-pdf viewer */
+.react-pdf__Document {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.react-pdf__Page {
+  margin-bottom: 8px;
+  box-shadow: 0 2px 8px var(--theme-pdf-shadow, rgba(0, 0, 0, 0.3));
+}
+
+.react-pdf__Page__canvas {
+  margin: 0 auto;
+  display: block !important;
+}
+
+.react-pdf__Page__textContent {
+  user-select: text;
+}
+
+/* PDF text selection — use browser default */
+
+.react-pdf__Page__annotations {
+  display: none;
+}
+
+/* Compilation progress bar */
+.compilation-progress {
+  height: 2px;
+  background: var(--color-accent);
+  animation: progress 2s ease-in-out infinite;
+}
+
+/* Sync highlight flash in editor */
+.cm-syncHighlight {
+  background-color: var(--color-accent);
+  opacity: 0.25;
+  border-radius: 2px;
+}

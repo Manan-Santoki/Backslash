@@ -1,0 +1,56 @@
+services:
+  # ── LaTeX Compiler Image Builder ──────────────────
+  # Builds the compiler image and exits. The app service
+  # creates ephemeral containers from this image per build.
+  compiler-image:
+    build:
+      context: .
+      dockerfile: docker/texlive/Dockerfile
+    image: leafedit-compiler
+    entrypoint: ["true"]
+    restart: "no"
+
+  # ── Web Application ────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=redis://redis:6379
+      - STORAGE_PATH=/data/leafedit
+      - TEMPLATES_PATH=/app/templates
+      - COMPILER_IMAGE=leafedit-compiler
+      - COMPILE_MEMORY=${COMPILE_MEMORY:-1g}
+      - COMPILE_CPUS=${COMPILE_CPUS:-1.5}
+      - MAX_CONCURRENT_BUILDS=${MAX_CONCURRENT_BUILDS:-5}
+      - COMPILE_TIMEOUT=${COMPILE_TIMEOUT:-120}
+      - SESSION_SECRET=${SESSION_SECRET:-change-me-to-a-random-64-char-string}
+      - DISABLE_SIGNUP=${DISABLE_SIGNUP:-false}
+    volumes:
+      - /data/leafedit:/data/leafedit
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      compiler-image:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ── Redis ──────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  redis-data:
+    driver: local
