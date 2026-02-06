@@ -36,6 +36,9 @@ const COMPILE_CPUS = parseFloat(
     String(LIMITS.COMPILE_CPUS_DEFAULT)
 );
 
+const STORAGE_PATH = process.env.STORAGE_PATH || "/data";
+const PROJECTS_VOLUME = process.env.PROJECTS_VOLUME || "leafedit-project-data";
+
 // ─── Types ─────────────────────────────────────────
 
 export interface CompileContainerOptions {
@@ -185,10 +188,17 @@ export async function runCompileContainer(
     container = await docker.createContainer({
       Image: COMPILER_IMAGE,
       Cmd: cmd,
-      WorkingDir: "/work",
+      WorkingDir: projectDir,
       NetworkDisabled: true,
       HostConfig: {
-        Binds: [`${projectDir}:/work`],
+        Mounts: [
+          {
+            Type: "volume" as "volume",
+            Source: PROJECTS_VOLUME,
+            Target: STORAGE_PATH,
+            ReadOnly: false,
+          },
+        ],
         Memory: memoryBytes,
         NanoCpus: nanoCpus,
         PidsLimit: 256,
