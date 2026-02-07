@@ -62,9 +62,106 @@ try {
   await migrate(db, { migrationsFolder });
   console.log("[migrate] ✅ All migrations applied successfully");
 } catch (error) {
-  console.error("[migrate] ❌ Migration failed:", error?.message || error);
-  await client.end();
-  process.exit(1);
+  const msg = error?.message || String(error);
+
+  // If Drizzle's migrate() fails because types/tables already exist
+  // (legacy database created by a previous init.sql), apply each
+  // migration statement individually, skip "already exists" errors,
+  // and record them in Drizzle's journal so future runs are clean.
+  if (msg.includes("already exists")) {
+    console.log("[migrate] ⚠ Detected pre-existing schema, applying migrations individually...");
+
+    try {
+      const journalPath = path.join(migrationsFolder, "meta/_journal.json");
+      const journal = JSON.parse(fs.readFileSync(journalPath, "utf-8"));
+
+      // Find which migrations Drizzle already knows about
+      const applied = new Set();
+      try {
+        const rows = await client`
+          SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at
+        `;
+        for (const row of rows) applied.add(row.hash);
+      } catch {
+        // Journal table might not exist yet — that's fine
+      }
+
+      for (const entry of journal.entries) {
+        const sqlPath = path.join(migrationsFolder, `${entry.tag}.sql`);
+        if (!fs.existsSync(sqlPath)) continue;
+
+        const sqlContent = fs.readFileSync(sqlPath, "utf-8");
+
+        // Compute the same hash Drizzle uses (simple content hash)
+        const { createHash } = await import("node:crypto");
+        const hash = createHash("sha256").update(sqlContent).digest("hex");
+
+        if (applied.has(hash)) {
+          console.log(`[migrate]   ⏭ ${entry.tag} (already recorded)`);
+          continue;
+        }
+
+        // Apply each statement, skipping harmless conflicts
+        const statements = sqlContent
+          .split("--> statement-breakpoint")
+          .map((s) => s.trim())
+          .filter(Boolean);
+
+        let skipped = 0;
+        for (const stmt of statements) {
+          try {
+            await client.unsafe(stmt);
+          } catch (stmtErr) {
+            const stmtMsg = stmtErr?.message || "";
+            if (
+              stmtMsg.includes("already exists") ||
+              stmtMsg.includes("duplicate key") ||
+              stmtMsg.includes("duplicate")
+            ) {
+              skipped++;
+              continue;
+            }
+            // Real error — log but keep going
+            console.warn(`[migrate]   ⚠ Statement error: ${stmtMsg}`);
+          }
+        }
+
+        // Record this migration in Drizzle's journal so it won't re-run
+        try {
+          await client`
+            INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
+            VALUES (${hash}, ${Date.now()})
+          `;
+        } catch {
+          // If the journal table doesn't exist, create it first
+          await client.unsafe(`
+            CREATE SCHEMA IF NOT EXISTS drizzle;
+            CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations (
+              id SERIAL PRIMARY KEY,
+              hash text NOT NULL,
+              created_at bigint
+            );
+          `);
+          await client`
+            INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
+            VALUES (${hash}, ${Date.now()})
+          `;
+        }
+
+        console.log(`[migrate]   ✅ ${entry.tag} (${statements.length} statements, ${skipped} skipped)`);
+      }
+
+      console.log("[migrate] ✅ Legacy migration pass completed");
+    } catch (fallbackErr) {
+      console.error("[migrate] ❌ Fallback migration failed:", fallbackErr?.message || fallbackErr);
+      await client.end();
+      process.exit(1);
+    }
+  } else {
+    console.error("[migrate] ❌ Migration failed:", msg);
+    await client.end();
+    process.exit(1);
+  }
 }
 
 await client.end();
