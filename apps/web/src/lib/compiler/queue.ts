@@ -6,29 +6,40 @@ import type { Engine } from "@backslash/shared";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 
-let redisInstance: IORedis | null = null;
+// Use globalThis to survive Next.js hot module reloads
+const REDIS_KEY = "__backslash_queue_redis__" as const;
+const QUEUE_KEY = "__backslash_compile_queue__" as const;
 
 export function getRedisConnection(): IORedis {
-  if (!redisInstance) {
-    redisInstance = new IORedis(REDIS_URL, {
-      maxRetriesPerRequest: null,
-      enableReadyCheck: false,
-      retryStrategy(times: number) {
-        const delay = Math.min(times * 200, 5000);
-        return delay;
-      },
-    });
-
-    redisInstance.on("error", (err) => {
-      console.error("[Redis] Connection error:", err.message);
-    });
-
-    redisInstance.on("connect", () => {
-      console.log("[Redis] Connected successfully");
-    });
+  let instance = ((globalThis as unknown) as Record<string, IORedis | undefined>)[REDIS_KEY];
+  if (instance && instance.status !== "end") {
+    return instance;
   }
 
-  return redisInstance;
+  instance = new IORedis(REDIS_URL, {
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
+    keepAlive: 10_000,
+    retryStrategy(times: number) {
+      const delay = Math.min(times * 200, 5000);
+      return delay;
+    },
+    reconnectOnError() {
+      return true;
+    },
+  });
+
+  instance.on("error", (err) => {
+    console.error("[Redis] Connection error:", err.message);
+  });
+
+  instance.on("connect", () => {
+    console.log("[Redis] Connected successfully");
+  });
+
+  ((globalThis as unknown) as Record<string, IORedis>)[REDIS_KEY] = instance;
+
+  return instance;
 }
 
 // ─── Job Types ─────────────────────────────────────
@@ -53,43 +64,37 @@ export interface CompileJobResult {
 
 const QUEUE_NAME = "compile";
 
-let compileQueueInstance: Queue<CompileJobData, CompileJobResult> | null = null;
-
 export function getCompileQueue(): Queue<CompileJobData, CompileJobResult> {
-  if (!compileQueueInstance) {
-    compileQueueInstance = new Queue<CompileJobData, CompileJobResult>(
-      QUEUE_NAME,
-      {
-        connection: getRedisConnection(),
-        defaultJobOptions: {
-          attempts: 1,
-          removeOnComplete: {
-            age: 3600, // keep completed jobs for 1 hour
-            count: 200,
-          },
-          removeOnFail: {
-            age: 86400, // keep failed jobs for 24 hours
-            count: 500,
-          },
-        },
-      }
-    );
+  let instance = ((globalThis as unknown) as Record<string, Queue<CompileJobData, CompileJobResult> | undefined>)[QUEUE_KEY];
+  if (instance) {
+    return instance;
   }
 
-  return compileQueueInstance;
+  instance = new Queue<CompileJobData, CompileJobResult>(
+    QUEUE_NAME,
+    {
+      connection: getRedisConnection(),
+      defaultJobOptions: {
+        attempts: 1,
+        removeOnComplete: {
+          age: 3600,
+          count: 200,
+        },
+        removeOnFail: {
+          age: 86400,
+          count: 500,
+        },
+      },
+    }
+  );
+
+  ((globalThis as unknown) as Record<string, Queue<CompileJobData, CompileJobResult>>)[QUEUE_KEY] = instance;
+
+  return instance;
 }
 
 // ─── Job Helpers ───────────────────────────────────
 
-/**
- * Adds a compile job to the queue with deduplication.
- *
- * Uses `projectId` as the deduplication key so that if a compilation
- * for the same project is already queued (but not yet actively running),
- * the duplicate is dropped. Once a job starts processing it is no longer
- * considered for deduplication, allowing a new build to be queued while
- * the previous one is in progress.
- */
 export async function addCompileJob(
   data: CompileJobData
 ): Promise<string | null> {
@@ -110,13 +115,15 @@ export async function addCompileJob(
  * Gracefully shuts down the compile queue and Redis connection.
  */
 export async function shutdownQueue(): Promise<void> {
-  if (compileQueueInstance) {
-    await compileQueueInstance.close();
-    compileQueueInstance = null;
+  const queue = ((globalThis as unknown) as Record<string, Queue | undefined>)[QUEUE_KEY];
+  if (queue) {
+    await queue.close();
+    ((globalThis as unknown) as Record<string, Queue | null>)[QUEUE_KEY] = null;
   }
 
-  if (redisInstance) {
-    await redisInstance.quit();
-    redisInstance = null;
+  const redis = ((globalThis as unknown) as Record<string, IORedis | undefined>)[REDIS_KEY];
+  if (redis) {
+    await redis.quit();
+    ((globalThis as unknown) as Record<string, IORedis | null>)[REDIS_KEY] = null;
   }
 }

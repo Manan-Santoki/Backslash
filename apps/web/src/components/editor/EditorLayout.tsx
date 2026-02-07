@@ -110,7 +110,7 @@ export function EditorLayout({
   const [buildErrors, setBuildErrors] = useState<LogError[]>([]);
   const [pdfLoading, setPdfLoading] = useState(false);
 
-  // Step 3a: Disable auto-compile if last build failed
+  // Disable auto-compile if last build failed (prevents rebuild loop on refresh)
   const [autoCompileEnabled, setAutoCompileEnabled] = useState(() => {
     if (initialBuild?.status === "error" || initialBuild?.status === "timeout") {
       return false;
@@ -120,19 +120,28 @@ export function EditorLayout({
 
   const [dirtyFileIds, setDirtyFileIds] = useState<Set<string>>(new Set());
 
+  // ─── Compile Guards (prevent build pileup) ────────
+
+  // Ref-based compiling flag: avoids stale closures in callbacks
+  const compilingRef = useRef(false);
+  // When a save+compile is requested while already compiling, set this flag.
+  // After the current build completes successfully, we'll trigger a recompile.
+  const pendingRecompileRef = useRef(false);
+  // Track autoCompileEnabled via ref for use in WS callbacks
+  const autoCompileEnabledRef = useRef(autoCompileEnabled);
+  autoCompileEnabledRef.current = autoCompileEnabled;
+
   // ─── Collaboration State ──────────────────────────
 
   const [presenceUsers, setPresenceUsers] = useState<PresenceUser[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
 
-  // Step 2b: Remote changes state for CodeEditor
   const [remoteChanges, setRemoteChanges] = useState<{
     fileId: string;
     userId: string;
     changes: DocChange[];
   } | null>(null);
 
-  // Step 2c: Remote cursors state for CodeEditor
   const [remoteCursors, setRemoteCursors] = useState<
     Map<string, { color: string; name: string; selection: CursorSelection }>
   >(new Map());
@@ -143,16 +152,161 @@ export function EditorLayout({
 
   const codeEditorRef = useRef<CodeEditorHandle>(null);
   const savedContentRef = useRef<Map<string, string>>(new Map());
-
-  // Step 2a: File contents cache
   const fileContentsRef = useRef<Map<string, string>>(new Map());
-
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Ref to track activeFileId in callbacks without stale closures
   const activeFileIdRef = useRef<string | null>(null);
   activeFileIdRef.current = activeFileId;
+
+  // ─── Helpers ───────────────────────────────────────
+
+  const clearAllPolling = useCallback(() => {
+    if (pollIntervalRef.current) {
+      clearInterval(pollIntervalRef.current);
+      pollIntervalRef.current = null;
+    }
+    if (pollTimeoutRef.current) {
+      clearTimeout(pollTimeoutRef.current);
+      pollTimeoutRef.current = null;
+    }
+  }, []);
+
+  /** Reset all compiling state back to idle */
+  const resetCompileState = useCallback(() => {
+    compilingRef.current = false;
+    setCompiling(false);
+    setPdfLoading(false);
+    clearAllPolling();
+  }, [clearAllPolling]);
+
+  const applyChangesToCache = useCallback(
+    (fileId: string, changes: DocChange[]) => {
+      const cached = fileContentsRef.current.get(fileId);
+      if (cached === undefined) return;
+
+      let result = cached;
+      const sorted = [...changes].sort((a, b) => b.from - a.from);
+      for (const change of sorted) {
+        const from = Math.min(change.from, result.length);
+        const to = Math.min(change.to, result.length);
+        result = result.slice(0, from) + change.insert + result.slice(to);
+      }
+      fileContentsRef.current.set(fileId, result);
+    },
+    []
+  );
+
+  const fetchFileContent = useCallback(
+    async (fileId: string) => {
+      try {
+        const res = await fetch(
+          `/api/projects/${project.id}/files/${fileId}`
+        );
+        if (res.ok) {
+          const data = await res.json();
+          const content = data.content ?? "";
+          fileContentsRef.current.set(fileId, content);
+          if (activeFileIdRef.current === fileId) {
+            setActiveFileContent(content);
+          }
+          savedContentRef.current.set(fileId, content);
+          setDirtyFileIds((prev) => {
+            const next = new Set(prev);
+            next.delete(fileId);
+            return next;
+          });
+        }
+      } catch {
+        if (activeFileIdRef.current === fileId) {
+          setActiveFileContent("");
+        }
+      }
+    },
+    [project.id]
+  );
+
+  // ─── Polling fallback for build completion ────────
+
+  const startBuildPolling = useCallback(() => {
+    clearAllPolling();
+
+    pollIntervalRef.current = setInterval(async () => {
+      try {
+        const logsRes = await fetch(`/api/projects/${project.id}/logs`);
+        if (!logsRes.ok) return;
+
+        const logsData = await logsRes.json();
+        const build = logsData.build;
+
+        if (
+          build.status === "success" ||
+          build.status === "error" ||
+          build.status === "timeout"
+        ) {
+          clearAllPolling();
+
+          // Only update if still compiling (WS may have handled it)
+          if (!compilingRef.current) return;
+
+          setBuildStatus(build.status);
+          setBuildLogs(build.logs ?? "");
+          setBuildDuration(build.durationMs);
+          setBuildErrors(logsData.errors ?? []);
+
+          if (build.status === "success") {
+            setPdfUrl(`/api/projects/${project.id}/pdf?t=${Date.now()}`);
+            setAutoCompileEnabled(true);
+
+            // If file was changed during build, recompile
+            if (pendingRecompileRef.current) {
+              pendingRecompileRef.current = false;
+              setBuildStatus("queued");
+              fetch(`/api/projects/${project.id}/compile`, { method: "POST" })
+                .then((res) => {
+                  if (res.ok) {
+                    startBuildPolling();
+                  } else {
+                    resetCompileState();
+                    setBuildStatus("error");
+                  }
+                })
+                .catch(() => {
+                  resetCompileState();
+                  setBuildStatus("error");
+                });
+              return; // Keep compiling state — recompile in progress
+            }
+          }
+
+          if (build.status === "error" || build.status === "timeout") {
+            setAutoCompileEnabled(false);
+            pendingRecompileRef.current = false;
+            if (saveTimeoutRef.current) {
+              clearTimeout(saveTimeoutRef.current);
+              saveTimeoutRef.current = null;
+            }
+          }
+
+          resetCompileState();
+        }
+      } catch {
+        // Polling error — keep trying
+      }
+    }, 1500);
+
+    // Hard timeout: if polling finds nothing after 120s, give up
+    pollTimeoutRef.current = setTimeout(() => {
+      clearAllPolling();
+      if (compilingRef.current) {
+        setBuildStatus("timeout");
+        setAutoCompileEnabled(false);
+        pendingRecompileRef.current = false;
+        resetCompileState();
+      }
+    }, 120_000);
+  }, [project.id, clearAllPolling, resetCompileState]);
 
   // ─── WebSocket Integration ────────────────────────
 
@@ -164,38 +318,56 @@ export function EditorLayout({
   } = useWebSocket(project.id, {
     onBuildStatus: (data) => {
       setBuildStatus(data.status);
-      setCompiling(true);
+      if (!compilingRef.current) {
+        compilingRef.current = true;
+        setCompiling(true);
+      }
       setPdfLoading(true);
     },
     onBuildComplete: (data) => {
+      clearAllPolling();
+
       setBuildStatus(data.status);
       setBuildLogs(data.logs ?? "");
       setBuildDuration(data.durationMs);
       setBuildErrors((data.errors as LogError[]) ?? []);
-      setCompiling(false);
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-      if (pollTimeoutRef.current) {
-        clearTimeout(pollTimeoutRef.current);
-        pollTimeoutRef.current = null;
-      }
+
       if (data.status === "success") {
         setPdfUrl(`/api/projects/${project.id}/pdf?t=${Date.now()}`);
-        // Step 3c: Resume auto-compile on successful build
         setAutoCompileEnabled(true);
+
+        // If file was changed during build, recompile with latest content
+        if (pendingRecompileRef.current) {
+          pendingRecompileRef.current = false;
+          setBuildStatus("queued");
+          setPdfLoading(true);
+          fetch(`/api/projects/${project.id}/compile`, { method: "POST" })
+            .then((res) => {
+              if (res.ok) {
+                startBuildPolling();
+              } else {
+                resetCompileState();
+                setBuildStatus("error");
+              }
+            })
+            .catch(() => {
+              resetCompileState();
+              setBuildStatus("error");
+            });
+          return; // Keep compiling state — recompile in progress
+        }
       }
-      // Step 3b: Disable auto-compile on failure
+
       if (data.status === "error" || data.status === "timeout") {
         setAutoCompileEnabled(false);
-        // Step 3d: Cancel pending auto-save compile on failure
+        pendingRecompileRef.current = false;
         if (saveTimeoutRef.current) {
           clearTimeout(saveTimeoutRef.current);
           saveTimeoutRef.current = null;
         }
       }
-      setPdfLoading(false);
+
+      resetCompileState();
     },
     // Presence events
     onPresenceUsers: (users) => {
@@ -209,7 +381,6 @@ export function EditorLayout({
     },
     onPresenceLeft: (userId) => {
       setPresenceUsers((prev) => prev.filter((u) => u.userId !== userId));
-      // Clear cursor for user who left
       setRemoteCursors((prev) => {
         const next = new Map(prev);
         next.delete(userId);
@@ -232,38 +403,31 @@ export function EditorLayout({
     onChatHistory: (messages) => {
       setChatMessages(messages);
     },
-    // File events from other users
+    // File events
     onFileCreated: () => {
       refreshFiles();
     },
     onFileDeleted: (data) => {
       refreshFiles();
-      // Close the deleted file's tab if open
       if (openFiles.some((f) => f.id === data.fileId)) {
         handleCloseTab(data.fileId);
       }
     },
-    // Step 2e: Handle file saved by another user
     onFileSaved: (data) => {
       if (data.fileId !== activeFileIdRef.current) {
-        // Invalidate cache so next switch fetches fresh
         fileContentsRef.current.delete(data.fileId);
       } else {
-        // Active file was saved by another user — fetch latest
         fetchFileContent(data.fileId);
       }
     },
-    // Step 2b: Handle doc changes from other users
+    // Collaborative editing
     onDocChanged: (data) => {
       const { userId, fileId, changes } = data;
       if (fileId === activeFileIdRef.current) {
-        // Trigger granular update in CodeEditor
         setRemoteChanges({ fileId, userId, changes });
       }
-      // Also update the cache for non-active files
       applyChangesToCache(fileId, changes);
     },
-    // Step 2c: Handle cursor events
     onCursorUpdated: (data) => {
       if (data.fileId === activeFileIdRef.current) {
         setRemoteCursors((prev) => {
@@ -287,156 +451,29 @@ export function EditorLayout({
     },
   });
 
-  // ─── Helpers ───────────────────────────────────────
+  // ─── File content loading ─────────────────────────
 
-  // Apply granular changes to cached string for a file
-  const applyChangesToCache = useCallback(
-    (fileId: string, changes: DocChange[]) => {
-      const cached = fileContentsRef.current.get(fileId);
-      if (cached === undefined) return;
-
-      let result = cached;
-      // Apply changes in reverse order to preserve positions
-      const sorted = [...changes].sort((a, b) => b.from - a.from);
-      for (const change of sorted) {
-        const from = Math.min(change.from, result.length);
-        const to = Math.min(change.to, result.length);
-        result = result.slice(0, from) + change.insert + result.slice(to);
-      }
-      fileContentsRef.current.set(fileId, result);
-    },
-    []
-  );
-
-  // Fetch file content from server
-  const fetchFileContent = useCallback(
-    async (fileId: string) => {
-      try {
-        const res = await fetch(
-          `/api/projects/${project.id}/files/${fileId}`
-        );
-        if (res.ok) {
-          const data = await res.json();
-          const content = data.content ?? "";
-          // Update cache
-          fileContentsRef.current.set(fileId, content);
-          // If this is still the active file, update state
-          if (activeFileIdRef.current === fileId) {
-            setActiveFileContent(content);
-          }
-          savedContentRef.current.set(fileId, content);
-          setDirtyFileIds((prev) => {
-            const next = new Set(prev);
-            next.delete(fileId);
-            return next;
-          });
-        }
-      } catch {
-        if (activeFileIdRef.current === fileId) {
-          setActiveFileContent("");
-        }
-      }
-    },
-    [project.id]
-  );
-
-  // ─── Polling fallback for build completion ────────
-
-  const startBuildPolling = useCallback(() => {
-    // Clear any existing poll
-    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-    if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
-
-    pollIntervalRef.current = setInterval(async () => {
-      try {
-        const logsRes = await fetch(`/api/projects/${project.id}/logs`);
-        if (!logsRes.ok) return;
-
-        const logsData = await logsRes.json();
-        const build = logsData.build;
-
-        if (
-          build.status === "success" ||
-          build.status === "error" ||
-          build.status === "timeout"
-        ) {
-          if (pollIntervalRef.current) {
-            clearInterval(pollIntervalRef.current);
-            pollIntervalRef.current = null;
-          }
-          // Only update if still compiling (WebSocket may have already handled it)
-          setCompiling((prev) => {
-            if (prev) {
-              setBuildStatus(build.status);
-              setBuildLogs(build.logs ?? "");
-              setBuildDuration(build.durationMs);
-              setBuildErrors(logsData.errors ?? []);
-              if (build.status === "success") {
-                setPdfUrl(
-                  `/api/projects/${project.id}/pdf?t=${Date.now()}`
-                );
-                setAutoCompileEnabled(true);
-              }
-              if (build.status === "error" || build.status === "timeout") {
-                setAutoCompileEnabled(false);
-                if (saveTimeoutRef.current) {
-                  clearTimeout(saveTimeoutRef.current);
-                  saveTimeoutRef.current = null;
-                }
-              }
-              setPdfLoading(false);
-            }
-            return false;
-          });
-        }
-      } catch {
-        // Polling error -- keep trying
-      }
-    }, 1500);
-
-    // Timeout after 120s
-    pollTimeoutRef.current = setTimeout(() => {
-      if (pollIntervalRef.current) {
-        clearInterval(pollIntervalRef.current);
-        pollIntervalRef.current = null;
-      }
-      setCompiling((prev) => {
-        if (prev) {
-          setBuildStatus("timeout");
-          setAutoCompileEnabled(false);
-          setPdfLoading(false);
-        }
-        return false;
-      });
-    }, 120_000);
-  }, [project.id]);
-
-  // Step 4b: Fetch file content when active file changes — check cache first
   useEffect(() => {
     if (!activeFileId) return;
 
-    // Check cache first
     const cached = fileContentsRef.current.get(activeFileId);
     if (cached !== undefined) {
       setActiveFileContent(cached);
       return;
     }
 
-    // Not cached — fetch from server
     fetchFileContent(activeFileId);
   }, [activeFileId, fetchFileContent]);
 
-  // Step 4a: Open a file in the editor — save content before switching
+  // ─── File operations ──────────────────────────────
+
   const handleFileSelect = useCallback(
     (fileId: string, filePath: string) => {
-      // Save current content to cache before switching
       if (activeFileId && activeFileContent !== undefined) {
         fileContentsRef.current.set(activeFileId, activeFileContent);
       }
 
-      // Clear remote cursors when switching files (they belong to different files)
       setRemoteCursors(new Map());
-
       setActiveFileId(fileId);
 
       const alreadyOpen = openFiles.some((f) => f.id === fileId);
@@ -444,13 +481,11 @@ export function EditorLayout({
         setOpenFiles((prev) => [...prev, { id: fileId, path: filePath }]);
       }
 
-      // Broadcast active file to other users
       sendActiveFile(fileId, filePath);
     },
     [openFiles, sendActiveFile, activeFileId, activeFileContent]
   );
 
-  // Close a tab
   const handleCloseTab = useCallback(
     (fileId: string) => {
       setOpenFiles((prev) => {
@@ -473,16 +508,20 @@ export function EditorLayout({
     [activeFileId]
   );
 
-  // Save file content (with optional auto-compile)
+  // ─── Save & Compile ───────────────────────────────
+
   const handleSave = useCallback(
-    async (content: string, autoCompile: boolean) => {
+    async (content: string, shouldCompile: boolean) => {
       if (!activeFileId) return;
+
+      // Decide whether to actually trigger a compile
+      const willCompile = shouldCompile && !compilingRef.current;
 
       try {
         await fetch(`/api/projects/${project.id}/files/${activeFileId}`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ content, autoCompile }),
+          body: JSON.stringify({ content, autoCompile: willCompile }),
         });
 
         savedContentRef.current.set(activeFileId, content);
@@ -492,12 +531,16 @@ export function EditorLayout({
           return next;
         });
 
-        if (autoCompile) {
+        if (willCompile) {
+          compilingRef.current = true;
+          pendingRecompileRef.current = false;
           setCompiling(true);
           setBuildStatus("queued");
           setPdfLoading(true);
-          // Start polling as fallback in case WS doesn't deliver
           startBuildPolling();
+        } else if (shouldCompile && compilingRef.current) {
+          // Wanted to compile but already compiling — recompile after current build
+          pendingRecompileRef.current = true;
         }
       } catch {
         // Save failed silently
@@ -506,14 +549,10 @@ export function EditorLayout({
     [activeFileId, project.id, startBuildPolling]
   );
 
-  // Debounced save
-  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
   const handleEditorChange = useCallback(
     (content: string) => {
       setActiveFileContent(content);
 
-      // Update file contents cache
       if (activeFileId) {
         fileContentsRef.current.set(activeFileId, content);
 
@@ -544,10 +583,8 @@ export function EditorLayout({
     [handleSave, activeFileId, autoCompileEnabled]
   );
 
-  // Immediate save (for Ctrl+S) — always compiles
   const handleImmediateSave = useCallback(() => {
     if (!activeFileId) return;
-    // Cancel pending debounce
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
       saveTimeoutRef.current = null;
@@ -555,9 +592,11 @@ export function EditorLayout({
     handleSave(activeFileContent, true);
   }, [activeFileId, activeFileContent, handleSave]);
 
-  // Compile project (manual)
   const handleCompile = useCallback(async () => {
-    if (compiling) return;
+    if (compilingRef.current) return;
+
+    compilingRef.current = true;
+    pendingRecompileRef.current = false;
     setCompiling(true);
     setBuildStatus("compiling");
     setPdfLoading(true);
@@ -569,21 +608,39 @@ export function EditorLayout({
 
       if (!res.ok) {
         setBuildStatus("error");
-        setCompiling(false);
-        setPdfLoading(false);
+        resetCompileState();
         return;
       }
 
-      // WebSocket handles real-time updates, polling is fallback
       startBuildPolling();
     } catch {
       setBuildStatus("error");
-      setCompiling(false);
-      setPdfLoading(false);
+      resetCompileState();
     }
-  }, [compiling, project.id, startBuildPolling]);
+  }, [project.id, startBuildPolling, resetCompileState]);
 
-  // Keyboard shortcuts: Ctrl+Enter (compile), Ctrl+S (save)
+  // ─── Hard safety timeout ──────────────────────────
+  // If we're stuck in "compiling" for 3 minutes, force-reset.
+  // This prevents the UI from being stuck forever if both WS and polling fail.
+
+  useEffect(() => {
+    if (!compiling) return;
+
+    const hardTimeout = setTimeout(() => {
+      if (compilingRef.current) {
+        console.warn("[Build] Hard timeout — resetting compile state after 3 minutes");
+        setBuildStatus("timeout");
+        setAutoCompileEnabled(false);
+        pendingRecompileRef.current = false;
+        resetCompileState();
+      }
+    }, 180_000);
+
+    return () => clearTimeout(hardTimeout);
+  }, [compiling, resetCompileState]);
+
+  // ─── Keyboard shortcuts ───────────────────────────
+
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
       if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
@@ -600,7 +657,8 @@ export function EditorLayout({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [handleCompile, handleImmediateSave]);
 
-  // Refresh file list
+  // ─── Refresh files ────────────────────────────────
+
   const refreshFiles = useCallback(async () => {
     try {
       const res = await fetch(`/api/projects/${project.id}/files`);
@@ -613,12 +671,10 @@ export function EditorLayout({
     }
   }, [project.id]);
 
-  // PDF text selection → highlight in editor
   const handlePdfTextSelect = useCallback((text: string) => {
     codeEditorRef.current?.highlightText(text);
   }, []);
 
-  // Handle error click in build logs
   const handleErrorClick = useCallback(
     (file: string, line: number) => {
       const target = files.find(
@@ -643,13 +699,13 @@ export function EditorLayout({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Cleanup polling on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
-      if (pollTimeoutRef.current) clearTimeout(pollTimeoutRef.current);
+      clearAllPolling();
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
     };
-  }, []);
+  }, [clearAllPolling]);
 
   return (
     <div className="flex h-full w-full flex-col bg-bg-primary">
@@ -694,7 +750,6 @@ export function EditorLayout({
                     activeFileId={activeFileId}
                     dirtyFileIds={dirtyFileIds}
                     onSelectTab={(fileId) => {
-                      // Save current content before switching tabs
                       if (activeFileId && activeFileContent !== undefined) {
                         fileContentsRef.current.set(activeFileId, activeFileContent);
                       }

@@ -13,8 +13,12 @@ function getPublisher(): IORedis {
     publisher = new IORedis(REDIS_URL, {
       maxRetriesPerRequest: null,
       enableReadyCheck: false,
+      keepAlive: 10_000,
       retryStrategy(times: number) {
         return Math.min(times * 200, 5000);
+      },
+      reconnectOnError() {
+        return true;
       },
     });
 
