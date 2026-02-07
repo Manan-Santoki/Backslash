@@ -55,41 +55,54 @@ interface UseWebSocketOptions {
 // ─── WebSocket URL Resolution ──────────────────────
 
 /**
- * Resolves the WebSocket server URL at **runtime** (in the browser).
+ * Resolves the WebSocket server URL and socket.io path at **runtime**.
  *
- * Priority:
- * 1. NEXT_PUBLIC_WS_URL env var – but since NEXT_PUBLIC_ vars are
- *    inlined at build time this only works when the Docker build
- *    receives the arg.  For most deployments the automatic
- *    detection below is preferred.
+ * Behind a reverse proxy (HTTPS / production):
+ *   Dokploy routes /ws/* → ws:3001 (stripping the /ws prefix).
+ *   So we connect to the same host with path "/ws/socket.io".
  *
- * 2. Same origin with `/ws` path – works behind any reverse proxy
- *    (Dokploy, Coolify, Traefik, Caddy …) that forwards /ws to
- *    the WebSocket service.
- *
- * 3. Same hostname, port 3001 – bare Docker Compose / local dev
- *    where no reverse proxy rewrites paths.
+ * Direct connection (HTTP / local dev):
+ *   Connect to the same hostname on port 3001, path "/socket.io".
  */
-function getWsUrl(): string {
+function getWsConfig(): { url: string; path: string } {
   // Build-time override (only works if set during `next build`)
   if (process.env.NEXT_PUBLIC_WS_URL) {
-    return process.env.NEXT_PUBLIC_WS_URL;
+    const envUrl = process.env.NEXT_PUBLIC_WS_URL;
+    // If the env URL contains a path component (e.g. /ws), use it as a path prefix
+    try {
+      const parsed = new URL(envUrl);
+      if (parsed.pathname && parsed.pathname !== "/") {
+        return {
+          url: parsed.origin,
+          path: `${parsed.pathname}/socket.io`,
+        };
+      }
+    } catch {
+      // Fall through
+    }
+    return { url: envUrl, path: "/socket.io" };
   }
 
   if (typeof window !== "undefined") {
     const protocol = window.location.protocol === "https:" ? "https" : "http";
     const host = window.location.host; // includes port if non-standard
 
-    // Behind HTTPS (production with reverse proxy) → use /ws path
+    // Behind HTTPS (production with reverse proxy) → use /ws path prefix
     if (window.location.protocol === "https:") {
-      return `${protocol}://${host}/ws`;
+      return {
+        url: `${protocol}://${host}`,
+        path: "/ws/socket.io",
+      };
     }
 
-    // Plain HTTP (local dev / bare Docker Compose) → port 3001
-    return `${protocol}://${window.location.hostname}:3001`;
+    // Plain HTTP (local dev / bare Docker Compose) → direct port 3001
+    return {
+      url: `${protocol}://${window.location.hostname}:3001`,
+      path: "/socket.io",
+    };
   }
 
-  return "http://localhost:3001";
+  return { url: "http://localhost:3001", path: "/socket.io" };
 }
 
 // ─── Hook ──────────────────────────────────────────
@@ -145,10 +158,10 @@ export function useWebSocket(
   useEffect(() => {
     if (!projectId) return;
 
-    const wsUrl = getWsUrl();
+    const { url: wsUrl, path: wsPath } = getWsConfig();
 
     const socket = io(wsUrl, {
-      path: "/socket.io",
+      path: wsPath,
       withCredentials: true,
       transports: ["websocket", "polling"],
       reconnection: true,

@@ -39,20 +39,27 @@ export function startCompileWorker(): Worker<CompileJobData, CompileJobResult> {
     return workerInstance;
   }
 
+  const connection = getRedisConnection();
+
   workerInstance = new Worker<CompileJobData, CompileJobResult>(
     QUEUE_NAME,
     async (job: Job<CompileJobData, CompileJobResult>) => {
+      console.log(`[Worker] Processing job ${job.id} for project ${job.data.projectId}`);
       return processCompileJob(job);
     },
     {
-      connection: getRedisConnection(),
+      connection,
       concurrency: MAX_CONCURRENT_BUILDS,
-      limiter: {
-        max: MAX_CONCURRENT_BUILDS,
-        duration: 1000,
-      },
     }
   );
+
+  workerInstance.on("ready", () => {
+    console.log("[Worker] BullMQ worker connected to Redis and ready to process jobs");
+  });
+
+  workerInstance.on("active", (job) => {
+    console.log(`[Worker] Job ${job.id} is now active (project ${job.data.projectId})`);
+  });
 
   workerInstance.on("completed", (job) => {
     console.log(
@@ -69,6 +76,17 @@ export function startCompileWorker(): Worker<CompileJobData, CompileJobResult> {
 
   workerInstance.on("error", (err) => {
     console.error("[Worker] Worker error:", err.message);
+  });
+
+  workerInstance.on("stalled", (jobId) => {
+    console.warn(`[Worker] Job ${jobId} has stalled`);
+  });
+
+  // Wait for the worker to be fully ready before returning
+  workerInstance.waitUntilReady().then(() => {
+    console.log("[Worker] Worker fully initialized and polling for jobs");
+  }).catch((err) => {
+    console.error("[Worker] Failed to initialize:", err.message);
   });
 
   console.log(

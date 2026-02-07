@@ -97,19 +97,11 @@ export async function addCompileJob(
 
   const jobOptions: JobsOptions = {
     jobId: data.buildId,
-    deduplication: {
-      id: data.projectId,
-    },
-    priority: 1,
   };
 
+  console.log(`[Queue] Adding compile job ${data.buildId} for project ${data.projectId}`);
   const job = await queue.add("compile", data, jobOptions);
-
-  // When deduplicated, BullMQ still returns a job reference but with
-  // the existing job's id. Return null if this job was deduplicated.
-  if (job && job.id !== data.buildId) {
-    return null;
-  }
+  console.log(`[Queue] Job added successfully: ${job?.id}`);
 
   return job?.id ?? null;
 }
