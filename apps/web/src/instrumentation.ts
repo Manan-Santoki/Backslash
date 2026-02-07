@@ -5,18 +5,30 @@ export async function register() {
       const { migrate } = await import("drizzle-orm/postgres-js/migrator");
       const { db } = await import("@/lib/db");
       const path = await import("path");
+      const fs = await import("fs");
 
-      // In Docker the CWD is /app, migrations are at /app/apps/web/drizzle/migrations
-      // In dev the CWD is apps/web, migrations are at ./drizzle/migrations
-      const migrationsFolder = path.resolve(
-        process.cwd(),
-        process.env.NODE_ENV === "production"
-          ? "apps/web/drizzle/migrations"
-          : "drizzle/migrations"
-      );
+      // Next.js standalone changes CWD, so check multiple possible locations
+      const candidates = [
+        path.resolve(process.cwd(), "drizzle/migrations"),
+        path.resolve(process.cwd(), "apps/web/drizzle/migrations"),
+        path.resolve("/app/apps/web/drizzle/migrations"),
+        path.resolve("/app/drizzle/migrations"),
+      ];
 
-      await migrate(db, { migrationsFolder });
-      console.log("[DB] Migrations applied successfully");
+      const migrationsFolder = candidates.find((p) => {
+        try {
+          return fs.existsSync(path.join(p, "meta/_journal.json"));
+        } catch {
+          return false;
+        }
+      });
+
+      if (migrationsFolder) {
+        await migrate(db, { migrationsFolder });
+        console.log("[DB] Migrations applied successfully");
+      } else {
+        console.warn("[DB] Migrations folder not found, skipping. Searched:", candidates);
+      }
     } catch (error: any) {
       console.error("[DB] Migration failed:", error?.message || error);
       // Don't crash — the tables might already exist
