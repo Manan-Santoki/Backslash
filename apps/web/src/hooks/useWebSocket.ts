@@ -55,21 +55,37 @@ interface UseWebSocketOptions {
 // ─── WebSocket URL Resolution ──────────────────────
 
 /**
- * Resolves the WebSocket server URL.
+ * Resolves the WebSocket server URL at **runtime** (in the browser).
  *
  * Priority:
- * 1. NEXT_PUBLIC_WS_URL env var (for custom deployments)
- * 2. Same hostname, port 3001 (default Docker setup)
+ * 1. NEXT_PUBLIC_WS_URL env var – but since NEXT_PUBLIC_ vars are
+ *    inlined at build time this only works when the Docker build
+ *    receives the arg.  For most deployments the automatic
+ *    detection below is preferred.
+ *
+ * 2. Same origin with `/ws` path – works behind any reverse proxy
+ *    (Dokploy, Coolify, Traefik, Caddy …) that forwards /ws to
+ *    the WebSocket service.
+ *
+ * 3. Same hostname, port 3001 – bare Docker Compose / local dev
+ *    where no reverse proxy rewrites paths.
  */
 function getWsUrl(): string {
-  // Explicit override via env
+  // Build-time override (only works if set during `next build`)
   if (process.env.NEXT_PUBLIC_WS_URL) {
     return process.env.NEXT_PUBLIC_WS_URL;
   }
 
-  // Default: same host, port 3001
   if (typeof window !== "undefined") {
     const protocol = window.location.protocol === "https:" ? "https" : "http";
+    const host = window.location.host; // includes port if non-standard
+
+    // Behind HTTPS (production with reverse proxy) → use /ws path
+    if (window.location.protocol === "https:") {
+      return `${protocol}://${host}/ws`;
+    }
+
+    // Plain HTTP (local dev / bare Docker Compose) → port 3001
     return `${protocol}://${window.location.hostname}:3001`;
   }
 
