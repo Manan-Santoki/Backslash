@@ -25,11 +25,6 @@ COPY templates/ templates/
 WORKDIR /app/apps/web
 RUN pnpm run build
 
-# Prepare migration deps in an isolated directory (outside pnpm workspace)
-# so they can be copied cleanly to the production image.
-RUN mkdir -p /migrate-deps && cd /migrate-deps \
-    && npm init -y && npm install --production postgres drizzle-orm
-
 # ── Production Stage ─────────────────────────────────
 FROM node:22-alpine AS runner
 
@@ -42,17 +37,10 @@ COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/templates ./templates
-COPY --from=builder /app/apps/web/drizzle ./apps/web/drizzle
-COPY --from=builder /app/apps/web/scripts ./apps/web/scripts
-COPY --from=builder /app/apps/web/docker-entrypoint.sh ./apps/web/docker-entrypoint.sh
-
-# Migration deps — isolated from standalone's node_modules
-COPY --from=builder /migrate-deps/node_modules ./migrate-deps/node_modules
 
 # Create data directory
 RUN mkdir -p /data/projects /data/templates
-RUN chmod +x apps/web/docker-entrypoint.sh
 
 EXPOSE 3000
 
-ENTRYPOINT ["apps/web/docker-entrypoint.sh"]
+CMD ["node", "apps/web/server.js"]

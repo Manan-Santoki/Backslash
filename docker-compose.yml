@@ -31,6 +31,26 @@ services:
       - backslash
     restart: unless-stopped
 
+  # ── Database Migrations ─────────────────────────────
+  # Runs all pending Drizzle migrations, then exits.
+  # Uses the builder stage which has all node_modules.
+  # On every deploy, this brings the DB schema up to date.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: builder
+    working_dir: /app
+    command: ["node", "apps/web/scripts/migrate.mjs"]
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@postgres:5432/backslash}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backslash
+    restart: "no"
+
   # ── Web Application ────────────────────────────────
   app:
     build:
@@ -57,6 +77,8 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       compiler-image:
+        condition: service_completed_successfully
+      migrate:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
