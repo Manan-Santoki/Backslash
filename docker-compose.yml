@@ -54,6 +54,7 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
     environment:
+      - HOSTNAME=0.0.0.0
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@postgres:5432/backslash}
       - REDIS_URL=redis://redis:6379
