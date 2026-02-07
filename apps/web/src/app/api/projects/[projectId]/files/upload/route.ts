@@ -44,6 +44,46 @@ export async function POST(
         );
       }
 
+      // Auto-create parent directory entries for nested paths (e.g. "chapters/intro.tex" → create "chapters")
+      const dirPaths = new Set<string>();
+      for (let i = 0; i < entries.length; i++) {
+        const filePath = paths[i] || entries[i].name;
+        const parts = filePath.split("/");
+        for (let j = 1; j < parts.length; j++) {
+          dirPaths.add(parts.slice(0, j).join("/"));
+        }
+      }
+
+      for (const dirPath of Array.from(dirPaths).sort()) {
+        const [existingDir] = await db
+          .select({ id: projectFiles.id })
+          .from(projectFiles)
+          .where(
+            and(
+              eq(projectFiles.projectId, projectId),
+              eq(projectFiles.path, dirPath)
+            )
+          )
+          .limit(1);
+
+        if (!existingDir) {
+          // Create the directory on disk
+          const projectDir = storage.getProjectDir(user.id, projectId);
+          const fullDirPath = path.join(projectDir, dirPath);
+          await storage.createDirectory(fullDirPath);
+
+          // Create the directory entry in DB
+          await db.insert(projectFiles).values({
+            id: uuidv4(),
+            projectId,
+            path: dirPath,
+            mimeType: null,
+            sizeBytes: 0,
+            isDirectory: true,
+          });
+        }
+      }
+
       const created = [];
 
       for (let i = 0; i < entries.length; i++) {
