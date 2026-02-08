@@ -72,7 +72,11 @@ const client = postgres(DATABASE_URL, { max: 1 });
 const db = drizzle(client);
 
 try {
-  await migrate(db, { migrationsFolder });
+  // Use the "public" schema for Drizzle's migration tracking table instead of
+  // creating a separate "drizzle" schema. This avoids CREATE SCHEMA permission
+  // errors on managed Postgres (Supabase, Neon, RDS, Dokploy, Coolify, etc.)
+  // where the database user may not have the CREATE privilege.
+  await migrate(db, { migrationsFolder, migrationsSchema: "public" });
   console.log("[migrate] ✅ All migrations applied successfully");
 } catch (error) {
   const msg = error?.message || String(error);
@@ -101,7 +105,7 @@ try {
       const applied = new Set();
       try {
         const rows = await client`
-          SELECT hash FROM drizzle.__drizzle_migrations ORDER BY created_at
+          SELECT hash FROM public.__drizzle_migrations ORDER BY created_at
         `;
         for (const row of rows) applied.add(row.hash);
       } catch {
@@ -150,21 +154,20 @@ try {
         // Record this migration in Drizzle's journal so it won't re-run
         try {
           await client`
-            INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
+            INSERT INTO public.__drizzle_migrations (hash, created_at)
             VALUES (${hash}, ${Date.now()})
           `;
         } catch {
           // If the journal table doesn't exist, create it first
           await client.unsafe(`
-            CREATE SCHEMA IF NOT EXISTS drizzle;
-            CREATE TABLE IF NOT EXISTS drizzle.__drizzle_migrations (
+            CREATE TABLE IF NOT EXISTS public.__drizzle_migrations (
               id SERIAL PRIMARY KEY,
               hash text NOT NULL,
               created_at bigint
             );
           `);
           await client`
-            INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
+            INSERT INTO public.__drizzle_migrations (hash, created_at)
             VALUES (${hash}, ${Date.now()})
           `;
         }
