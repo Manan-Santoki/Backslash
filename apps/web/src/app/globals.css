@@ -171,3 +171,96 @@ body {
   opacity: 0.25;
   border-radius: 2px;
 }
+
+/* ─── CodeMirror 6 Editor Styles ───────────────── */
+
+/* Ensure editor takes full height and allows scrolling */
+.cm-editor {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.cm-scroller {
+  flex: 1;
+  overflow: auto;
+  font-family: var(--font-mono) !important;
+  line-height: 1.6;
+}
+
+/* Editor content background */
+.cm-content {
+  background-color: var(--color-editor-bg);
+  color: var(--color-text-primary);
+  padding: 8px 0;
+}
+
+/* Gutter (line numbers) styling */
+.cm-gutters {
+  background-color: var(--color-editor-gutter) !important;
+  border-right: 1px solid var(--color-border) !important;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+}
+
+.cm-lineNumbers {
+  color: var(--color-text-muted);
+}
+
+.cm-lineNumbers .cm-gutterElement {
+  padding: 0 12px 0 8px;
+  min-width: 32px;
+  text-align: right;
+}
+
+/* Active line highlighting */
+.cm-activeLine {
+  background-color: var(--color-editor-line-hl) !important;
+}
+
+.cm-activeLineGutter {
+  background-color: var(--color-editor-line-hl) !important;
+  color: var(--color-text-primary);
+}
+
+/* Selection styling */
+.cm-selectionBackground {
+  background-color: var(--color-editor-selection) !important;
+}
+
+.cm-focused .cm-selectionBackground {
+  background-color: var(--color-editor-selection) !important;
+}
+
+/* Cursor styling */
+.cm-cursor {
+  border-left-color: var(--color-accent) !important;
+  border-left-width: 2px !important;
+}
+
+/* Syntax highlighting - ensure good contrast */
+.cm-keyword { color: #c678dd; }
+.cm-operator { color: #56b6c2; }
+.cm-variable { color: #e06c75; }
+.cm-string { color: #98c379; }
+.cm-comment { color: #5c6370; font-style: italic; }
+.cm-number { color: #d19a66; }
+.cm-property { color: #e06c75; }
+.cm-definition { color: #61afef; }
+.cm-builtin { color: #e5c07b; }
+
+/* For light theme adjustments */
+[data-theme="light"] .cm-keyword { color: #a626a4; }
+[data-theme="light"] .cm-operator { color: #0184bc; }
+[data-theme="light"] .cm-variable { color: #e45649; }
+[data-theme="light"] .cm-string { color: #50a14f; }
+[data-theme="light"] .cm-comment { color: #a0a1a7; font-style: italic; }
+[data-theme="light"] .cm-number { color: #986801; }
+[data-theme="light"] .cm-property { color: #e45649; }
+[data-theme="light"] .cm-definition { color: #4078f2; }
+[data-theme="light"] .cm-builtin { color: #c18401; }
+
+/* Ensure editor fills container properly */
+.cm-editor.cm-focused {
+  outline: none;
+}
