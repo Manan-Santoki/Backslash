@@ -6,7 +6,10 @@
       "Bash(node -e:*)",
       "Bash(npx tsc:*)",
       "Bash(npx next build:*)",
-      "Bash(./node_modules/.bin/tsc:*)"
+      "Bash(./node_modules/.bin/tsc:*)",
+      "Bash(pnpm install:*)",
+      "Bash(ls -la \"C:\\\\Users\\\\manan\\\\localleaf\\\\apps\\\\web\\\\src\\\\components\\\\editor\"\" 2>/dev/null || echo \"Path not found, let me check structure \")",
+      "Bash(ls:*)"
     ]
   }
 }

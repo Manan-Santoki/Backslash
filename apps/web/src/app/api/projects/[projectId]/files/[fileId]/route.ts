@@ -6,11 +6,13 @@ import {
   renameFileSchema,
   validateFilePath,
 } from "@/lib/utils/validation";
+import { checkProjectAccess } from "@/lib/db/queries/projects";
+import { broadcastFileEvent } from "@/lib/websocket/server";
 import * as storage from "@/lib/storage";
 import { eq, and, like } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
-import { addCompileJob } from "@/lib/compiler/queue";
+import { addCompileJob } from "@/lib/compiler/runner";
 import { v4 as uuidv4 } from "uuid";
 
 // ─── GET /api/projects/[projectId]/files/[fileId] ──
@@ -24,18 +26,15 @@ export async function GET(
     try {
       const { projectId, fileId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access) {
         return NextResponse.json(
           { error: "Project not found" },
           { status: 404 }
         );
       }
+
+      const project = access.project;
 
       const [file] = await db
         .select()
@@ -55,8 +54,27 @@ export async function GET(
         );
       }
 
-      const projectDir = storage.getProjectDir(user.id, projectId);
+      const projectDir = storage.getProjectDir(project.userId, projectId);
       const fullPath = path.join(projectDir, file.path);
+
+      // Serve raw binary file (e.g. images) when ?raw is present
+      const isRaw = request.nextUrl.searchParams.has("raw");
+      if (isRaw && !file.isDirectory && file.mimeType?.startsWith("image/")) {
+        try {
+          const buffer = await storage.readFileBinary(fullPath);
+          return new NextResponse(new Uint8Array(buffer), {
+            headers: {
+              "Content-Type": file.mimeType,
+              "Cache-Control": "private, max-age=3600",
+            },
+          });
+        } catch {
+          return NextResponse.json(
+            { error: "File not found on disk" },
+            { status: 404 }
+          );
+        }
+      }
 
       let content = "";
       if (!file.isDirectory) {
@@ -90,18 +108,15 @@ export async function PUT(
     try {
       const { projectId, fileId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access || access.role === "viewer") {
         return NextResponse.json(
-          { error: "Project not found" },
-          { status: 404 }
+          { error: "Permission denied" },
+          { status: 403 }
         );
       }
+
+      const project = access.project;
 
       const [file] = await db
         .select()
@@ -137,7 +152,7 @@ export async function PUT(
       const { content, autoCompile } = parsed.data;
 
       // Write updated content to disk
-      const projectDir = storage.getProjectDir(user.id, projectId);
+      const projectDir = storage.getProjectDir(project.userId, projectId);
       const fullPath = path.join(projectDir, file.path);
       await storage.writeFile(fullPath, content);
 
@@ -178,6 +193,15 @@ export async function PUT(
         buildQueued = true;
       }
 
+      // Broadcast file save to collaborators
+      broadcastFileEvent({
+        type: "file:saved",
+        projectId,
+        userId: user.id,
+        fileId,
+        path: file.path,
+      });
+
       return NextResponse.json({
         file: updatedFile,
         buildQueued,
@@ -203,18 +227,15 @@ export async function PATCH(
     try {
       const { projectId, fileId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access || access.role === "viewer") {
         return NextResponse.json(
-          { error: "Project not found" },
-          { status: 404 }
+          { error: "Permission denied" },
+          { status: 403 }
         );
       }
+
+      const project = access.project;
 
       const [file] = await db
         .select()
@@ -276,7 +297,7 @@ export async function PATCH(
         );
       }
 
-      const projectDir = storage.getProjectDir(user.id, projectId);
+      const projectDir = storage.getProjectDir(project.userId, projectId);
       const oldFullPath = path.join(projectDir, file.path);
       const newFullPath = path.join(projectDir, newPath);
 
@@ -334,18 +355,15 @@ export async function DELETE(
     try {
       const { projectId, fileId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access || access.role === "viewer") {
         return NextResponse.json(
-          { error: "Project not found" },
-          { status: 404 }
+          { error: "Permission denied" },
+          { status: 403 }
         );
       }
+
+      const project = access.project;
 
       const [file] = await db
         .select()
@@ -366,7 +384,7 @@ export async function DELETE(
       }
 
       // Delete from disk
-      const projectDir = storage.getProjectDir(user.id, projectId);
+      const projectDir = storage.getProjectDir(project.userId, projectId);
       const fullPath = path.join(projectDir, file.path);
 
       if (file.isDirectory) {
@@ -379,6 +397,15 @@ export async function DELETE(
       await db
         .delete(projectFiles)
         .where(eq(projectFiles.id, fileId));
+
+      // Broadcast file deletion to collaborators
+      broadcastFileEvent({
+        type: "file:deleted",
+        projectId,
+        userId: user.id,
+        fileId,
+        path: file.path,
+      });
 
       return NextResponse.json({ success: true });
     } catch (error) {

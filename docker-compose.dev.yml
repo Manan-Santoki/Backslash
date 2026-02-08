@@ -11,7 +11,6 @@ services:
       POSTGRES_PASSWORD: devpassword
     volumes:
       - postgres-dev:/var/lib/postgresql/data
-      - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U backslash"]
       interval: 5s

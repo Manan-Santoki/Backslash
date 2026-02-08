@@ -26,6 +26,21 @@ interface Project {
   updatedAt: string;
 }
 
+interface SharedProject {
+  id: string;
+  userId: string;
+  name: string;
+  description: string | null;
+  engine: string;
+  mainFile: string;
+  createdAt: string;
+  updatedAt: string;
+  ownerName: string;
+  ownerEmail: string;
+  role: "viewer" | "editor";
+  lastBuildStatus: string | null;
+}
+
 type Template = "blank" | "article" | "thesis" | "beamer" | "letter";
 
 // ─── Helpers ────────────────────────────────────────
@@ -383,6 +398,7 @@ function CardMenu({ onDelete }: CardMenuProps) {
 
 export default function DashboardPage() {
   const [projects, setProjects] = useState<Project[]>([]);
+  const [sharedProjects, setSharedProjects] = useState<SharedProject[]>([]);
   const [loading, setLoading] = useState(true);
   const [showNewDialog, setShowNewDialog] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Project | null>(null);
@@ -394,6 +410,7 @@ export default function DashboardPage() {
       if (res.ok) {
         const data = await res.json();
         setProjects(data.projects);
+        setSharedProjects(data.sharedProjects ?? []);
       }
     } catch {
       // Silently fail -- user sees empty state
@@ -529,6 +546,77 @@ export default function DashboardPage() {
               </div>
             </Link>
           ))}
+        </div>
+      )}
+
+      {/* Shared with me section */}
+      {!loading && sharedProjects.length > 0 && (
+        <div className="mt-10">
+          <div className="mb-4">
+            <h2 className="text-lg font-semibold text-text-primary">
+              Shared with me
+            </h2>
+            <p className="mt-0.5 text-sm text-text-secondary">
+              Projects others have shared with you
+            </p>
+          </div>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {sharedProjects.map((project) => (
+              <Link
+                key={project.id}
+                href={`/editor/${project.id}`}
+                className="group rounded-lg border border-border bg-bg-secondary p-5 transition-colors hover:bg-bg-elevated/50 hover:border-accent/30"
+              >
+                <div className="flex items-start justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <FileText className="h-4 w-4 shrink-0 text-accent" />
+                    <h3 className="truncate text-sm font-semibold text-text-primary group-hover:text-accent">
+                      {project.name}
+                    </h3>
+                  </div>
+                  <span className="shrink-0 inline-flex items-center rounded-full bg-bg-elevated px-2 py-0.5 text-[10px] font-medium text-text-muted border border-border">
+                    {project.role === "editor" ? "Editor" : "Viewer"}
+                  </span>
+                </div>
+
+                {project.description && (
+                  <p className="mt-2 line-clamp-2 text-sm text-text-secondary">
+                    {project.description}
+                  </p>
+                )}
+
+                <div className="mt-4 flex flex-wrap items-center gap-3">
+                  {/* Engine badge */}
+                  <span className="inline-flex items-center rounded-full bg-bg-elevated px-2.5 py-0.5 text-xs font-medium text-text-secondary">
+                    {project.engine}
+                  </span>
+
+                  {/* Owner info */}
+                  <span className="inline-flex items-center gap-1 text-xs text-text-muted">
+                    by {project.ownerName}
+                  </span>
+
+                  {/* Build status */}
+                  <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
+                    <span
+                      className={cn(
+                        "h-2 w-2 rounded-full",
+                        buildStatusColor(project.lastBuildStatus)
+                      )}
+                      title={buildStatusLabel(project.lastBuildStatus)}
+                    />
+                    {buildStatusLabel(project.lastBuildStatus)}
+                  </span>
+
+                  {/* Updated date */}
+                  <span className="inline-flex items-center gap-1 text-xs text-text-muted ml-auto">
+                    <Clock className="h-3 w-3" />
+                    {formatRelativeDate(project.updatedAt)}
+                  </span>
+                </div>
+              </Link>
+            ))}
+          </div>
         </div>
       )}
 

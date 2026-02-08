@@ -30,6 +30,11 @@ export const buildStatusEnum = pgEnum("build_status", [
   "timeout",
 ]);
 
+export const shareRoleEnum = pgEnum("share_role", [
+  "viewer",
+  "editor",
+]);
+
 // ─── Users ──────────────────────────────────────────
 
 export const users = pgTable(
@@ -158,6 +163,31 @@ export const apiKeys = pgTable(
   ]
 );
 
+// ─── Project Shares (Collaboration) ─────────────────
+
+export const projectShares = pgTable(
+  "project_shares",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    role: shareRoleEnum("role").default("viewer").notNull(),
+    invitedBy: uuid("invited_by")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("shares_project_user_idx").on(table.projectId, table.userId),
+    index("shares_user_idx").on(table.userId),
+    index("shares_project_idx").on(table.projectId),
+  ]
+);
+
 // ─── Relations ──────────────────────────────────────
 
 export const usersRelations = relations(users, ({ many }) => ({
@@ -165,6 +195,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   sessions: many(sessions),
   builds: many(builds),
   apiKeys: many(apiKeys),
+  sharedProjects: many(projectShares),
 }));
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({
@@ -175,6 +206,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   user: one(users, { fields: [projects.userId], references: [users.id] }),
   files: many(projectFiles),
   builds: many(builds),
+  shares: many(projectShares),
 }));
 
 export const projectFilesRelations = relations(projectFiles, ({ one }) => ({
@@ -194,4 +226,12 @@ export const buildsRelations = relations(builds, ({ one }) => ({
 
 export const apiKeysRelations = relations(apiKeys, ({ one }) => ({
   user: one(users, { fields: [apiKeys.userId], references: [users.id] }),
+}));
+
+export const projectSharesRelations = relations(projectShares, ({ one }) => ({
+  project: one(projects, {
+    fields: [projectShares.projectId],
+    references: [projects.id],
+  }),
+  user: one(users, { fields: [projectShares.userId], references: [users.id] }),
 }));

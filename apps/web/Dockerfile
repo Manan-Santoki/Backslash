@@ -10,6 +10,7 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 COPY package.json pnpm-workspace.yaml ./
 COPY apps/web/package.json apps/web/
 COPY apps/worker/package.json apps/worker/
+COPY apps/ws/package.json apps/ws/
 COPY packages/shared/package.json packages/shared/
 
 # Install dependencies from workspace root
@@ -36,6 +37,13 @@ COPY --from=builder /app/apps/web/.next/standalone ./
 COPY --from=builder /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/templates ./templates
+COPY --from=builder /app/apps/web/drizzle ./apps/web/drizzle
+COPY --from=builder /app/apps/web/scripts ./apps/web/scripts
+
+# Install migration dependencies (postgres, drizzle-orm) in an isolated
+# directory. Next.js standalone bundles these into webpack chunks so they
+# are NOT available in node_modules for the migration script.
+RUN npm install --prefix /migrate-deps postgres drizzle-orm 2>/dev/null
 
 # Create data directory
 RUN mkdir -p /data/projects /data/templates

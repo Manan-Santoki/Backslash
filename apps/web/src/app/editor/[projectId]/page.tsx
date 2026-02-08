@@ -47,6 +47,13 @@ interface ProjectData {
   project: Project;
   files: ProjectFile[];
   lastBuild: Build | null;
+  role?: "owner" | "viewer" | "editor";
+}
+
+interface CurrentUser {
+  id: string;
+  email: string;
+  name: string;
 }
 
 // ─── Editor Page ────────────────────────────────────
@@ -59,19 +66,30 @@ export default function EditorPage({
   const { projectId } = use(params);
 
   const [data, setData] = useState<ProjectData | null>(null);
+  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
 
   useEffect(() => {
-    async function fetchProject() {
+    async function fetchData() {
       try {
-        const res = await fetch(`/api/projects/${projectId}`);
-        if (!res.ok) {
+        const [projectRes, userRes] = await Promise.all([
+          fetch(`/api/projects/${projectId}`),
+          fetch("/api/auth/me"),
+        ]);
+
+        if (!projectRes.ok) {
           setError(true);
           return;
         }
-        const json = await res.json();
+
+        const json = await projectRes.json();
         setData(json);
+
+        if (userRes.ok) {
+          const userData = await userRes.json();
+          setCurrentUser(userData.user);
+        }
       } catch {
         setError(true);
       } finally {
@@ -79,7 +97,7 @@ export default function EditorPage({
       }
     }
 
-    fetchProject();
+    fetchData();
   }, [projectId]);
 
   // Loading state
@@ -123,6 +141,8 @@ export default function EditorPage({
       project={data.project}
       files={data.files}
       lastBuild={data.lastBuild}
+      role={data.role ?? "owner"}
+      currentUser={currentUser ?? { id: "", email: "", name: "" }}
     />
   );
 }

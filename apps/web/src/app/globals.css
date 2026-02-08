@@ -131,26 +131,6 @@ body {
   background: var(--color-text-muted);
 }
 
-/* CodeMirror overrides */
-.cm-editor {
-  height: 100% !important;
-  font-size: 14px;
-}
-
-.cm-editor .cm-content {
-  font-family: var(--font-mono);
-}
-
-.cm-editor .cm-gutters {
-  background-color: var(--color-editor-gutter);
-  border-right: 1px solid var(--color-border);
-}
-
-.cm-editor .cm-activeLineGutter,
-.cm-editor .cm-activeLine {
-  background-color: var(--color-editor-line-hl);
-}
-
 /* react-pdf viewer */
 .react-pdf__Document {
   display: flex;

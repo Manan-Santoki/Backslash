@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { projects } from "@/lib/db/schema";
 import { withAuth } from "@/lib/auth/middleware";
+import { checkProjectAccess } from "@/lib/db/queries/projects";
 import * as storage from "@/lib/storage";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
@@ -16,21 +17,18 @@ export async function GET(
     try {
       const { projectId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access) {
         return NextResponse.json(
           { error: "Project not found" },
           { status: 404 }
         );
       }
 
-      // Resolve the PDF path on disk
-      const pdfPath = storage.getPdfPath(user.id, projectId, project.mainFile);
+      const project = access.project;
+
+      // Resolve the PDF path on disk (use project owner's directory)
+      const pdfPath = storage.getPdfPath(project.userId, projectId, project.mainFile);
       const exists = await storage.fileExists(pdfPath);
 
       if (!exists) {

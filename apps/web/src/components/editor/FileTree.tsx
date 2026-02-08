@@ -93,6 +93,75 @@ function getParentPath(filePath: string): string {
   return idx === -1 ? "" : filePath.slice(0, idx);
 }
 
+// ─── Folder Drag-and-Drop from OS ───────────────────
+
+async function collectDroppedFiles(
+  dataTransfer: DataTransfer
+): Promise<{ file: File; path: string }[]> {
+  const result: { file: File; path: string }[] = [];
+
+  // Try the FileSystemEntry API for full folder support
+  const items = dataTransfer.items;
+  if (items) {
+    const entries: FileSystemEntry[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const entry = items[i].webkitGetAsEntry?.();
+      if (entry) entries.push(entry);
+    }
+
+    if (entries.length > 0) {
+      async function traverse(entry: FileSystemEntry, parentPath: string) {
+        if (entry.isFile) {
+          const file = await new Promise<File>((resolve, reject) =>
+            (entry as FileSystemFileEntry).file(resolve, reject)
+          );
+          result.push({
+            file,
+            path: parentPath ? `${parentPath}/${entry.name}` : entry.name,
+          });
+        } else if (entry.isDirectory) {
+          const dirPath = parentPath
+            ? `${parentPath}/${entry.name}`
+            : entry.name;
+          const children = await new Promise<FileSystemEntry[]>(
+            (resolve, reject) => {
+              const reader = (
+                entry as FileSystemDirectoryEntry
+              ).createReader();
+              const all: FileSystemEntry[] = [];
+              function readBatch() {
+                reader.readEntries((batch) => {
+                  if (batch.length === 0) resolve(all);
+                  else {
+                    all.push(...batch);
+                    readBatch();
+                  }
+                }, reject);
+              }
+              readBatch();
+            }
+          );
+          for (const child of children) {
+            await traverse(child, dirPath);
+          }
+        }
+      }
+
+      for (const entry of entries) {
+        await traverse(entry, "");
+      }
+      return result;
+    }
+  }
+
+  // Fallback: plain FileList (no folder support)
+  for (let i = 0; i < dataTransfer.files.length; i++) {
+    const file = dataTransfer.files[i];
+    result.push({ file, path: file.name });
+  }
+  return result;
+}
+
 // ─── Context Menu ───────────────────────────────────
 
 interface ContextMenuProps {
@@ -149,11 +218,16 @@ interface TreeNodeItemProps {
   depth: number;
   activeFileId: string | null;
   renamingFileId: string | null;
+  dropTargetPath: string | null;
   onFileSelect: (fileId: string, filePath: string) => void;
   onDeleteFile: (fileId: string) => void;
   onContextMenu: (e: React.MouseEvent, fileId: string) => void;
   onRenameSubmit: (fileId: string, oldPath: string, newName: string) => void;
   onRenameCancel: () => void;
+  onDragStartInternal: (fileId: string, filePath: string) => void;
+  onDragEndInternal: () => void;
+  onDragOverFolder: (folderPath: string) => void;
+  onDropOnFolder: (fileId: string, filePath: string, targetPath: string) => void;
 }
 
 function TreeNodeItem({
@@ -161,11 +235,16 @@ function TreeNodeItem({
   depth,
   activeFileId,
   renamingFileId,
+  dropTargetPath,
   onFileSelect,
   onDeleteFile,
   onContextMenu,
   onRenameSubmit,
   onRenameCancel,
+  onDragStartInternal,
+  onDragEndInternal,
+  onDragOverFolder,
+  onDropOnFolder,
 }: TreeNodeItemProps) {
   const [expanded, setExpanded] = useState(depth < 1);
   const [renameValue, setRenameValue] = useState("");
@@ -225,13 +304,42 @@ function TreeNodeItem({
     <div>
       <button
         type="button"
+        draggable={!!node.file && !isRenaming}
         onClick={handleClick}
         onContextMenu={handleRightClick}
+        onDragStart={(e) => {
+          if (!node.file) return;
+          e.dataTransfer.setData("application/x-backslash-file-id", node.file.id);
+          e.dataTransfer.setData("application/x-backslash-file-path", node.file.path);
+          e.dataTransfer.effectAllowed = "move";
+          onDragStartInternal(node.file.id, node.file.path);
+        }}
+        onDragEnd={onDragEndInternal}
+        onDragOver={(e) => {
+          if (!node.isDirectory) return;
+          if (e.dataTransfer.types.includes("application/x-backslash-file-id")) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = "move";
+            onDragOverFolder(node.path);
+          }
+        }}
+        onDrop={(e) => {
+          if (!node.isDirectory) return;
+          const fId = e.dataTransfer.getData("application/x-backslash-file-id");
+          const fPath = e.dataTransfer.getData("application/x-backslash-file-path");
+          if (fId && fPath) {
+            e.preventDefault();
+            e.stopPropagation();
+            onDropOnFolder(fId, fPath, node.path);
+          }
+        }}
         className={cn(
           "flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm transition-colors",
           isActive
             ? "bg-accent/15 text-accent"
-            : "text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
+            : "text-text-secondary hover:bg-bg-elevated hover:text-text-primary",
+          dropTargetPath === node.path && node.isDirectory && "ring-2 ring-accent/50 bg-accent/10"
         )}
         style={{ paddingLeft: `${depth * 12 + 8}px` }}
       >
@@ -287,11 +395,16 @@ function TreeNodeItem({
               depth={depth + 1}
               activeFileId={activeFileId}
               renamingFileId={renamingFileId}
+              dropTargetPath={dropTargetPath}
               onFileSelect={onFileSelect}
               onDeleteFile={onDeleteFile}
               onContextMenu={onContextMenu}
               onRenameSubmit={onRenameSubmit}
               onRenameCancel={onRenameCancel}
+              onDragStartInternal={onDragStartInternal}
+              onDragEndInternal={onDragEndInternal}
+              onDragOverFolder={onDragOverFolder}
+              onDropOnFolder={onDropOnFolder}
             />
           ))}
           {node.children.length === 0 && (
@@ -327,6 +440,7 @@ export function FileTree({
   const [renamingFileId, setRenamingFileId] = useState<string | null>(null);
   const [isDraggingOver, setIsDraggingOver] = useState(false);
   const [uploading, setUploading] = useState(false);
+  const [dropTargetPath, setDropTargetPath] = useState<string | null>(null);
   const dragCounter = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -361,23 +475,51 @@ export function FileTree({
     [projectId, onFilesChanged]
   );
 
+  // ─── Internal drag-and-drop (move files between folders) ──
+
+  const handleInternalDragStart = useCallback(() => {
+    // Could add visual feedback here (e.g. opacity)
+  }, []);
+
+  const handleInternalDragEnd = useCallback(() => {
+    setDropTargetPath(null);
+  }, []);
+
+  const handleDragOverFolder = useCallback((folderPath: string) => {
+    setDropTargetPath(folderPath);
+  }, []);
+
+  const handleDropOnFolder = useCallback(
+    (fileId: string, filePath: string, targetFolderPath: string) => {
+      setDropTargetPath(null);
+      // Don't allow dropping a folder into itself or its children
+      if (targetFolderPath === filePath || targetFolderPath.startsWith(filePath + "/")) {
+        return;
+      }
+      const fileName = filePath.split("/").pop()!;
+      const newPath = targetFolderPath
+        ? `${targetFolderPath}/${fileName}`
+        : fileName;
+      if (newPath !== filePath) {
+        handleMove(fileId, newPath);
+      }
+    },
+    [handleMove]
+  );
+
   // ─── File upload via drag-and-drop from OS ────────
 
   const uploadFiles = useCallback(
-    async (droppedFiles: FileList) => {
-      if (droppedFiles.length === 0) return;
+    async (fileEntries: { file: File; path: string }[]) => {
+      if (fileEntries.length === 0) return;
       setUploading(true);
 
       try {
         const formData = new FormData();
 
-        for (let i = 0; i < droppedFiles.length; i++) {
-          const file = droppedFiles[i];
-          formData.append("files", file);
-          // Use webkitRelativePath if available (folder upload), otherwise just filename
-          const filePath =
-            (file as any).webkitRelativePath || file.name;
-          formData.append("paths", filePath);
+        for (const entry of fileEntries) {
+          formData.append("files", entry.file);
+          formData.append("paths", entry.path);
         }
 
         const res = await fetch(
@@ -421,21 +563,38 @@ export function FileTree({
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
+    if (e.dataTransfer.types.includes("application/x-backslash-file-id")) {
+      e.dataTransfer.dropEffect = "move";
+      setDropTargetPath(null); // Clear folder highlight when over root area
+    } else {
+      e.dataTransfer.dropEffect = "copy";
+    }
   }, []);
 
   const handleDrop = useCallback(
-    (e: React.DragEvent) => {
+    async (e: React.DragEvent) => {
       e.preventDefault();
       e.stopPropagation();
       dragCounter.current = 0;
       setIsDraggingOver(false);
 
-      if (e.dataTransfer.files.length > 0) {
-        uploadFiles(e.dataTransfer.files);
+      // Internal file move — drop on root area moves file to top level
+      const draggedId = e.dataTransfer.getData("application/x-backslash-file-id");
+      const draggedPath = e.dataTransfer.getData("application/x-backslash-file-path");
+      if (draggedId && draggedPath) {
+        setDropTargetPath(null);
+        const fileName = draggedPath.split("/").pop()!;
+        if (draggedPath !== fileName) {
+          handleMove(draggedId, fileName);
+        }
+        return;
       }
+
+      // External files — supports folders via FileSystemEntry API
+      const entries = await collectDroppedFiles(e.dataTransfer);
+      uploadFiles(entries);
     },
-    [uploadFiles]
+    [uploadFiles, handleMove]
   );
 
   // ─── Rename handlers ─────────────────────────────
@@ -640,11 +799,16 @@ export function FileTree({
             depth={0}
             activeFileId={activeFileId}
             renamingFileId={renamingFileId}
+            dropTargetPath={dropTargetPath}
             onFileSelect={onFileSelect}
             onDeleteFile={handleDeleteFile}
             onContextMenu={handleContextMenu}
             onRenameSubmit={handleRenameSubmit}
             onRenameCancel={handleRenameCancel}
+            onDragStartInternal={handleInternalDragStart}
+            onDragEndInternal={handleInternalDragEnd}
+            onDragOverFolder={handleDragOverFolder}
+            onDropOnFolder={handleDropOnFolder}
           />
         ))}
       </div>

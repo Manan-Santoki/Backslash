@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { projects, projectFiles, builds } from "@/lib/db/schema";
 import { withAuth, AuthenticatedUser } from "@/lib/auth/middleware";
 import { createProjectSchema } from "@/lib/utils/validation";
+import { findSharedProjectsByUser } from "@/lib/db/queries/projects";
 import * as storage from "@/lib/storage";
 import { MIME_TYPES } from "@backslash/shared";
 import { eq, and, desc } from "drizzle-orm";
@@ -10,7 +11,7 @@ import path from "path";
 import { v4 as uuidv4 } from "uuid";
 
 // ─── GET /api/projects ─────────────────────────────
-// List all projects for the authenticated user, including last build status.
+// List all projects for the authenticated user, including shared projects.
 
 export async function GET(request: NextRequest) {
   return withAuth(request, async (_req, user) => {
@@ -38,7 +39,28 @@ export async function GET(request: NextRequest) {
         })
       );
 
-      return NextResponse.json({ projects: projectsWithBuildStatus });
+      // Also fetch projects shared with this user
+      const sharedProjects = await findSharedProjectsByUser(user.id);
+      const sharedWithBuildStatus = await Promise.all(
+        sharedProjects.map(async (sp) => {
+          const [lastBuild] = await db
+            .select({ status: builds.status })
+            .from(builds)
+            .where(eq(builds.projectId, sp.id))
+            .orderBy(desc(builds.createdAt))
+            .limit(1);
+
+          return {
+            ...sp,
+            lastBuildStatus: lastBuild?.status ?? null,
+          };
+        })
+      );
+
+      return NextResponse.json({
+        projects: projectsWithBuildStatus,
+        sharedProjects: sharedWithBuildStatus,
+      });
     } catch (error) {
       console.error("Error listing projects:", error);
       return NextResponse.json(

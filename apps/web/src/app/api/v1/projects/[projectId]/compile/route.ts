@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { projects, builds } from "@/lib/db/schema";
 import { withApiKey } from "@/lib/auth/apikey";
-import { addCompileJob } from "@/lib/compiler/queue";
+import { addCompileJob } from "@/lib/compiler/runner";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";

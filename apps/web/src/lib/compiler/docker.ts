@@ -1,5 +1,4 @@
 import Docker from "dockerode";
-import { Readable } from "stream";
 import { readFile } from "fs/promises";
 import path from "path";
 import { ENGINE_FLAGS, LIMITS } from "@backslash/shared";
@@ -72,21 +71,30 @@ function parseMemoryString(mem: string): number {
 }
 
 /**
- * Collects all output from a Docker container's multiplexed stream
- * into a single string. Demuxes the Docker stream header frames
- * (8-byte headers per frame) to extract only the payload text.
+ * Fetches logs from a stopped container.
+ *
+ * Uses `follow: true` which returns a raw binary stream from dockerode.
+ * On a stopped container the Docker daemon immediately emits all output
+ * and closes the stream — so this is safe and doesn't hang.
+ *
+ * We CANNOT use `follow: false` because dockerode collects the response
+ * via string concatenation (`body += chunk`) which corrupts the binary
+ * multiplexed frame headers.
  */
-async function collectLogs(stream: NodeJS.ReadableStream): Promise<string> {
-  return new Promise<string>((resolve, reject) => {
+async function fetchContainerLogs(container: Docker.Container): Promise<string> {
+  return new Promise<string>((resolve) => {
+    // Safety timeout — if the stream hangs for any reason,
+    // return whatever we've collected so far.
+    const LOG_TIMEOUT_MS = 15_000;
+    let settled = false;
     const chunks: Buffer[] = [];
-    const readable = stream as Readable;
 
-    readable.on("data", (chunk: Buffer) => {
-      chunks.push(chunk);
-    });
+    function finish() {
+      if (settled) return;
+      settled = true;
 
-    readable.on("end", () => {
       const raw = Buffer.concat(chunks);
+
       // Demux Docker multiplexed stream: each frame has an 8-byte header
       // [stream_type(1), 0, 0, 0, size_be32(4)] followed by payload
       const payloads: Buffer[] = [];
@@ -105,13 +113,41 @@ async function collectLogs(stream: NodeJS.ReadableStream): Promise<string> {
         ? Buffer.concat(payloads).toString("utf-8")
         : raw.toString("utf-8");
 
-      // Strip any remaining null bytes that PostgreSQL rejects
+      // Strip null bytes that PostgreSQL rejects
       resolve(text.replace(/\0/g, ""));
-    });
+    }
 
-    readable.on("error", (err: Error) => {
-      reject(err);
-    });
+    const timeout = setTimeout(() => {
+      console.warn(`[Docker] Log collection timed out after ${LOG_TIMEOUT_MS}ms, using ${chunks.length} chunks collected so far`);
+      finish();
+    }, LOG_TIMEOUT_MS);
+
+    container.logs(
+      { follow: true, stdout: true, stderr: true },
+      (err: Error | null, stream: NodeJS.ReadableStream | undefined) => {
+        if (err || !stream) {
+          clearTimeout(timeout);
+          console.error(`[Docker] Failed to get log stream: ${err?.message || "no stream"}`);
+          resolve(err ? `[Docker] Log error: ${err.message}` : "");
+          return;
+        }
+
+        stream.on("data", (chunk: Buffer) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+
+        stream.on("end", () => {
+          clearTimeout(timeout);
+          finish();
+        });
+
+        stream.on("error", (streamErr: Error) => {
+          clearTimeout(timeout);
+          console.error(`[Docker] Log stream error: ${streamErr.message}`);
+          finish();
+        });
+      }
+    );
   });
 }
 
@@ -164,10 +200,14 @@ export async function runCompileContainer(
   const docker = getDockerClient();
   const { projectDir, mainFile } = options;
 
+  console.log(`[Docker] Starting compilation: dir=${projectDir} file=${mainFile}`);
+
   const engine = await detectEngine(projectDir, mainFile);
   const engineFlag = ENGINE_FLAGS[engine];
   const memoryBytes = parseMemoryString(COMPILE_MEMORY);
   const nanoCpus = Math.floor(COMPILE_CPUS * 1e9);
+
+  console.log(`[Docker] Engine: ${engine}, Image: ${COMPILER_IMAGE}, Volume: ${PROJECTS_VOLUME} -> ${STORAGE_PATH}`);
 
   const cmd = [
     "latexmk",
@@ -185,6 +225,7 @@ export async function runCompileContainer(
   let timedOut = false;
 
   try {
+    console.log(`[Docker] Creating container with WorkingDir=${projectDir}, cmd=${cmd.join(" ")}`);
     container = await docker.createContainer({
       Image: COMPILER_IMAGE,
       Cmd: cmd,
@@ -207,17 +248,10 @@ export async function runCompileContainer(
         AutoRemove: false,
       },
     });
-
-    // Attach to stdout/stderr before starting
-    const stream = await container.attach({
-      stream: true,
-      stdout: true,
-      stderr: true,
-    });
-
-    const logsPromise = collectLogs(stream);
+    console.log(`[Docker] Container created: ${container.id.slice(0, 12)}`);
 
     await container.start();
+    console.log(`[Docker] Container started: ${container.id.slice(0, 12)}`);
 
     // Enforce timeout via JS setTimeout
     const timeoutPromise = new Promise<"timeout">((resolve) => {
@@ -236,12 +270,12 @@ export async function runCompileContainer(
 
     if (race === "timeout") {
       timedOut = true;
+      console.warn(`[Docker] Container ${container.id.slice(0, 12)} timed out after ${COMPILE_TIMEOUT}s`);
       try {
         await container.kill();
       } catch {
         // Container may have already exited
       }
-      // Wait for container to fully stop after kill
       try {
         await container.wait();
       } catch {
@@ -249,15 +283,19 @@ export async function runCompileContainer(
       }
     } else {
       exitCode = race.StatusCode;
+      console.log(`[Docker] Container ${container.id.slice(0, 12)} exited with code ${exitCode}`);
     }
 
-    logs = await logsPromise;
+    // Fetch logs AFTER the container has stopped — this is reliable
+    // unlike pre-attaching a stream which can hang indefinitely.
+    logs = await fetchContainerLogs(container);
+    console.log(`[Docker] Logs fetched (${logs.length} chars)`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    console.error(`[Docker] Container error: ${message}`);
     logs = `[Docker] Container error: ${message}`;
     exitCode = -1;
   } finally {
-    // Always clean up the container
     if (container) {
       try {
         await container.remove({ force: true });

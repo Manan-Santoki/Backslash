@@ -1,14 +1,13 @@
-import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
 import { withAuth } from "@/lib/auth/middleware";
+import { checkProjectAccess } from "@/lib/db/queries/projects";
 import * as storage from "@/lib/storage";
-import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import archiver from "archiver";
 import { PassThrough } from "stream";
 
 // ─── GET /api/projects/[projectId]/download ────────
 // Download the entire project as a ZIP archive.
+// Accessible by owner and shared collaborators (any role).
 
 export async function GET(
   request: NextRequest,
@@ -18,20 +17,17 @@ export async function GET(
     try {
       const { projectId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access) {
         return NextResponse.json(
           { error: "Project not found" },
           { status: 404 }
         );
       }
 
-      const projectDir = storage.getProjectDir(user.id, projectId);
+      const project = access.project;
+
+      const projectDir = storage.getProjectDir(project.userId, projectId);
       const dirExists = await storage.fileExists(projectDir);
 
       if (!dirExists) {

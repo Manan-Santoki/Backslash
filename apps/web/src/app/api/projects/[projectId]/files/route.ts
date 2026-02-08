@@ -2,6 +2,8 @@ import { db } from "@/lib/db";
 import { projects, projectFiles } from "@/lib/db/schema";
 import { withAuth } from "@/lib/auth/middleware";
 import { createFileSchema, validateFilePath } from "@/lib/utils/validation";
+import { checkProjectAccess } from "@/lib/db/queries/projects";
+import { broadcastFileEvent } from "@/lib/websocket/server";
 import * as storage from "@/lib/storage";
 import { MIME_TYPES } from "@backslash/shared";
 import { eq, and } from "drizzle-orm";
@@ -20,13 +22,8 @@ export async function GET(
     try {
       const { projectId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access) {
         return NextResponse.json(
           { error: "Project not found" },
           { status: 404 }
@@ -60,19 +57,15 @@ export async function POST(
     try {
       const { projectId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access || access.role === "viewer") {
         return NextResponse.json(
-          { error: "Project not found" },
-          { status: 404 }
+          { error: "Permission denied" },
+          { status: 403 }
         );
       }
 
+      const project = access.project;
       const body = await req.json();
 
       const parsed = createFileSchema.safeParse(body);
@@ -116,7 +109,7 @@ export async function POST(
         );
       }
 
-      const projectDir = storage.getProjectDir(user.id, projectId);
+      const projectDir = storage.getProjectDir(project.userId, projectId);
       const fullPath = path.join(projectDir, filePath);
 
       let sizeBytes = 0;
@@ -149,6 +142,16 @@ export async function POST(
           isDirectory: isDirectory ?? false,
         })
         .returning();
+
+      // Broadcast file creation to other collaborators
+      broadcastFileEvent({
+        type: "file:created",
+        projectId,
+        userId: user.id,
+        fileId,
+        path: filePath,
+        isDirectory: isDirectory ?? false,
+      });
 
       return NextResponse.json({ file }, { status: 201 });
     } catch (error) {

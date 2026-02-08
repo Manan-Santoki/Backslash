@@ -2,12 +2,14 @@ import { db } from "@/lib/db";
 import { projects, projectFiles, builds } from "@/lib/db/schema";
 import { withAuth } from "@/lib/auth/middleware";
 import { updateProjectSchema } from "@/lib/utils/validation";
+import { checkProjectAccess } from "@/lib/db/queries/projects";
 import * as storage from "@/lib/storage";
 import { eq, and, desc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─── GET /api/projects/[projectId] ─────────────────
 // Get project details with file list and last build.
+// Accessible by owner AND shared collaborators.
 
 export async function GET(
   request: NextRequest,
@@ -17,18 +19,15 @@ export async function GET(
     try {
       const { projectId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access) {
         return NextResponse.json(
           { error: "Project not found" },
           { status: 404 }
         );
       }
+
+      const project = access.project;
 
       const files = await db
         .select()
@@ -46,6 +45,7 @@ export async function GET(
         project,
         files,
         lastBuild: lastBuild ?? null,
+        role: access.role,
       });
     } catch (error) {
       console.error("Error fetching project:", error);
@@ -58,7 +58,7 @@ export async function GET(
 }
 
 // ─── PUT /api/projects/[projectId] ─────────────────
-// Update project settings.
+// Update project settings. Owner only.
 
 export async function PUT(
   request: NextRequest,
@@ -68,16 +68,11 @@ export async function PUT(
     try {
       const { projectId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access || access.role !== "owner") {
         return NextResponse.json(
-          { error: "Project not found" },
-          { status: 404 }
+          { error: "Only the project owner can update settings" },
+          { status: 403 }
         );
       }
 
@@ -117,7 +112,7 @@ export async function PUT(
 }
 
 // ─── DELETE /api/projects/[projectId] ──────────────
-// Delete project, its DB rows, and project directory from disk.
+// Delete project, its DB rows, and project directory from disk. Owner only.
 
 export async function DELETE(
   request: NextRequest,
@@ -127,24 +122,21 @@ export async function DELETE(
     try {
       const { projectId } = await params;
 
-      const [project] = await db
-        .select()
-        .from(projects)
-        .where(eq(projects.id, projectId))
-        .limit(1);
-
-      if (!project || project.userId !== user.id) {
+      const access = await checkProjectAccess(user.id, projectId);
+      if (!access.access || access.role !== "owner") {
         return NextResponse.json(
-          { error: "Project not found" },
-          { status: 404 }
+          { error: "Only the project owner can delete it" },
+          { status: 403 }
         );
       }
+
+      const project = access.project;
 
       // Delete DB rows (cascades handle files and builds)
       await db.delete(projects).where(eq(projects.id, projectId));
 
       // Delete project directory from disk
-      const projectDir = storage.getProjectDir(user.id, projectId);
+      const projectDir = storage.getProjectDir(project.userId, projectId);
       await storage.deleteDirectory(projectDir);
 
       return NextResponse.json({ success: true });

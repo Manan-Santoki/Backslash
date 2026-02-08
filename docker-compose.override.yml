@@ -1,0 +1,25 @@
+# ── Port Exposure (auto-loaded by Docker Compose) ───
+#
+# This file is automatically merged with docker-compose.yml
+# when you run `docker compose up`. It publishes the app
+# on the host so you can reach it at http://localhost:PORT.
+#
+# ┌──────────────────────────────────────────────────────┐
+# │  Platform users (Dokploy, Coolify, Portainer, etc.)  │
+# │                                                      │
+# │  Add this line to your .env file to DISABLE port     │
+# │  exposure and let your platform handle networking:   │
+# │                                                      │
+# │    COMPOSE_FILE=docker-compose.yml                   │
+# │                                                      │
+# │  This tells Docker Compose to skip this override     │
+# │  file, so no port is published on the host.          │
+# └──────────────────────────────────────────────────────┘
+
+services:
+  app:
+    ports:
+      - "${PORT:-3000}:3000"
+  ws:
+    ports:
+      - "${WS_PORT:-3001}:3001"

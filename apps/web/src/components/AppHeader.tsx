@@ -35,12 +35,13 @@ interface UserInfo {
 
 interface AppHeaderProps {
   children?: React.ReactNode;
+  leftContent?: React.ReactNode;
   className?: string;
 }
 
 // ─── AppHeader ──────────────────────────────────────
 
-export function AppHeader({ children, className }: AppHeaderProps) {
+export function AppHeader({ children, leftContent, className }: AppHeaderProps) {
   const [user, setUser] = useState<UserInfo | null>(null);
   const { theme, toggleTheme } = useTheme();
 
@@ -72,20 +73,21 @@ export function AppHeader({ children, className }: AppHeaderProps) {
     <TooltipProvider delayDuration={300}>
       <div
         className={
-          "relative flex items-center justify-between border-b border-border bg-bg-secondary px-3 py-1.5" +
+          "relative flex items-center justify-between border-b border-border bg-bg-secondary px-3 py-2.5" +
           (className ? " " + className : "")
         }
       >
-        {/* Left: Logo */}
+        {/* Left: Logo + optional left content */}
         <div className="flex items-center gap-3 min-w-0">
           <a
             href="/dashboard"
             className="flex items-center gap-1.5 shrink-0 text-accent hover:text-accent-hover transition-colors"
           >
-            <span className="text-sm font-bold hidden sm:inline font-mono">
+            <span className="text-base font-bold hidden sm:inline font-mono">
               \Backslash
             </span>
           </a>
+          {leftContent}
         </div>
 
         {/* Center: Page-specific controls */}
