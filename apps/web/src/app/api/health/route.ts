@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import IORedis from "ioredis";
-import { getCompileQueue } from "@/lib/compiler/queue";
+import { getRunnerHealth } from "@/lib/compiler/runner";
 import { getDockerClient, healthCheck as dockerHealthCheck } from "@/lib/compiler/docker";
 
 // ─── GET /api/health ────────────────────────────────
@@ -20,7 +20,8 @@ export async function GET() {
     });
     await redis.connect();
     const pong = await redis.ping();
-    checks.redis = { ok: pong === "PONG", detail: pong };
+    const pendingJobs = await redis.llen("compile:pending");
+    checks.redis = { ok: pong === "PONG", detail: `${pong}, pending_jobs=${pendingJobs}` };
     await redis.quit();
   } catch (err) {
     checks.redis = {
@@ -29,21 +30,14 @@ export async function GET() {
     };
   }
 
-  // 2. BullMQ Queue
-  try {
-    const queue = getCompileQueue();
-    const waiting = await queue.getWaitingCount();
-    const active = await queue.getActiveCount();
-    const completed = await queue.getCompletedCount();
-    const failed = await queue.getFailedCount();
-    checks.bullmq = {
-      ok: true,
-      detail: `waiting=${waiting} active=${active} completed=${completed} failed=${failed}`,
-    };
-  } catch (err) {
-    checks.bullmq = {
-      ok: false,
-      detail: err instanceof Error ? err.message : String(err),
+  // 2. Compile Runner
+  {
+    const health = getRunnerHealth();
+    checks.compile_runner = {
+      ok: health ? health.running && health.redisConnected : false,
+      detail: health
+        ? `active=${health.activeJobs}/${health.maxConcurrent} processed=${health.totalProcessed} errors=${health.totalErrors}`
+        : "Runner not started",
     };
   }
 

@@ -1,7 +1,7 @@
 import { db } from "@/lib/db";
 import { projects, builds } from "@/lib/db/schema";
 import { withAuth } from "@/lib/auth/middleware";
-import { addCompileJob } from "@/lib/compiler/queue";
+import { addCompileJob } from "@/lib/compiler/runner";
 import { checkProjectAccess } from "@/lib/db/queries/projects";
 import { healthCheck as dockerHealthCheck, getDockerClient } from "@/lib/compiler/docker";
 import { eq } from "drizzle-orm";

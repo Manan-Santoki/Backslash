@@ -6,7 +6,8 @@
       "Bash(node -e:*)",
       "Bash(npx tsc:*)",
       "Bash(npx next build:*)",
-      "Bash(./node_modules/.bin/tsc:*)"
+      "Bash(./node_modules/.bin/tsc:*)",
+      "Bash(pnpm install:*)"
     ]
   }
 }

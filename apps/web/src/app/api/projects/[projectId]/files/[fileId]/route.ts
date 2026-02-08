@@ -12,7 +12,7 @@ import * as storage from "@/lib/storage";
 import { eq, and, like } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
-import { addCompileJob } from "@/lib/compiler/queue";
+import { addCompileJob } from "@/lib/compiler/runner";
 import { v4 as uuidv4 } from "uuid";
 
 // ─── GET /api/projects/[projectId]/files/[fileId] ──

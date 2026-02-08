@@ -1,12 +1,12 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
     try {
-      const { startCompileWorker } = await import("@/lib/compiler/worker");
-      startCompileWorker();
-      console.log("[Instrumentation] Compile worker started");
+      const { startCompileRunner } = await import("@/lib/compiler/runner");
+      startCompileRunner();
+      console.log("[Instrumentation] Compile runner started");
     } catch (err) {
       console.error(
-        "[Instrumentation] Failed to start compile worker:",
+        "[Instrumentation] Failed to start compile runner:",
         err instanceof Error ? err.message : err
       );
     }
