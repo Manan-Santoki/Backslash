@@ -465,7 +465,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
     return (
       <div
         ref={containerRef}
-        className="h-full w-full overflow-hidden bg-editor-bg"
+        className="h-full w-full overflow-auto bg-editor-bg"
       />
     );
   }
