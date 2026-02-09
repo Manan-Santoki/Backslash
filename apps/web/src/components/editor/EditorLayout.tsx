@@ -732,6 +732,21 @@ export function EditorLayout({
     codeEditorRef.current?.highlightText(text);
   }, []);
 
+  // Filter build errors for the currently active file
+  const activeFileErrors = (() => {
+    if (!activeFileId || buildErrors.length === 0) return [];
+    const activeFile = files.find((f) => f.id === activeFileId);
+    if (!activeFile) return [];
+    return buildErrors.filter(
+      (e) => e.type === "error" && (
+        activeFile.path === e.file ||
+        activeFile.path.endsWith(e.file) ||
+        e.file.endsWith(activeFile.path) ||
+        `./${activeFile.path}` === e.file
+      )
+    );
+  })();
+
   const handleErrorClick = useCallback(
     (file: string, line: number) => {
       const target = files.find(
@@ -861,6 +876,7 @@ export function EditorLayout({
                           content={activeFileContent}
                           onChange={handleEditorChange}
                           language="latex"
+                          errors={activeFileErrors}
                           onDocChange={(changes) => {
                             if (activeFileId) sendDocChange(activeFileId, changes, Date.now());
                           }}

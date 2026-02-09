@@ -11,10 +11,18 @@ interface RemoteCursorData {
   selection: CursorSelection;
 }
 
+interface BuildError {
+  type: string;
+  file: string;
+  line: number;
+  message: string;
+}
+
 interface CodeEditorProps {
   content: string;
   onChange: (value: string) => void;
   language?: string;
+  errors?: BuildError[];
   // Collaboration
   onDocChange?: (changes: DocChange[]) => void;
   onCursorChange?: (selection: CursorSelection) => void;
@@ -37,6 +45,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
       content,
       onChange,
       language = "latex",
+      errors,
       onDocChange,
       onCursorChange,
       remoteChanges,
@@ -179,6 +188,12 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const remoteCursorFieldRef = useRef<any>(null);
 
+    // Error line decorations
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errorEffectRef = useRef<any>(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errorFieldRef = useRef<any>(null);
+
     // Initialize CodeMirror
     useEffect(() => {
       if (!containerRef.current) return;
@@ -197,6 +212,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           Decoration,
           WidgetType,
           ViewPlugin,
+          MatchDecorator,
         } = await import("@codemirror/view");
         const {
           defaultHighlightStyle,
@@ -380,6 +396,92 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           }
         );
 
+        // ─── Error line decorations (zigzag underlines) ────
+        const setErrorsEffect = StateEffect.define<BuildError[]>();
+        errorEffectRef.current = setErrorsEffect;
+
+        const errorLineDeco = Decoration.line({ class: "cm-error-line" });
+
+        const errorField = StateField.define({
+          create() {
+            return Decoration.none;
+          },
+          update(value, tr) {
+            for (const e of tr.effects) {
+              if (e.is(setErrorsEffect)) {
+                const errors: BuildError[] = e.value;
+                if (errors.length === 0) return Decoration.none;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const decos: any[] = [];
+                const docLines = tr.state.doc.lines;
+                for (const err of errors) {
+                  if (err.line >= 1 && err.line <= docLines) {
+                    const lineInfo = tr.state.doc.line(err.line);
+                    decos.push(errorLineDeco.range(lineInfo.from));
+                  }
+                }
+                decos.sort((a: { from: number }, b: { from: number }) => a.from - b.from);
+                return Decoration.set(decos);
+              }
+            }
+            if (tr.docChanged) {
+              return value.map(tr.changes);
+            }
+            return value;
+          },
+          provide: (f) => EditorView.decorations.from(f),
+        });
+        errorFieldRef.current = errorField;
+
+        // ─── Clickable URL links ───────────────────────────
+        const urlRe = /https?:\/\/[^\s)}\]>"'`]+/g;
+        const urlDeco = Decoration.mark({
+          class: "cm-url-link",
+        });
+        const urlMatcher = new MatchDecorator({
+          regexp: urlRe,
+          decoration: () => urlDeco,
+        });
+        const urlPlugin = ViewPlugin.fromClass(
+          class {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            decorations: any;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            constructor(view: any) {
+              this.decorations = urlMatcher.createDeco(view);
+            }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            update(update: any) {
+              this.decorations = urlMatcher.updateDeco(update, this.decorations);
+            }
+          },
+          {
+            decorations: (v) => v.decorations,
+            eventHandlers: {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              mousedown(event: MouseEvent, view: any) {
+                if (!event.ctrlKey && !event.metaKey) return false;
+                const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+                if (pos === null) return false;
+                const line = view.state.doc.lineAt(pos);
+                const lineText = line.text;
+                const localUrlRe = /https?:\/\/[^\s)}\]>"'`]+/g;
+                let m;
+                while ((m = localUrlRe.exec(lineText)) !== null) {
+                  const from = line.from + m.index;
+                  const to = from + m[0].length;
+                  if (pos >= from && pos <= to) {
+                    window.open(m[0], "_blank", "noopener");
+                    event.preventDefault();
+                    return true;
+                  }
+                }
+                return false;
+              },
+            },
+          }
+        );
+
         const state = EditorState.create({
           doc: contentRef.current,
           extensions: [
@@ -404,6 +506,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
             ]),
             remoteCursorField,
             remoteCursorPlugin,
+            errorField,
+            urlPlugin,
             EditorView.updateListener.of((update) => {
               if (update.docChanged && !isExternalUpdate.current) {
                 const value = update.state.doc.toString();
@@ -524,6 +628,17 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
         effects: effect.of(remoteCursors),
       });
     }, [remoteCursors]);
+
+    // Update error line decorations
+    useEffect(() => {
+      const view = viewRef.current;
+      const effect = errorEffectRef.current;
+      if (!view || !effect) return;
+
+      view.dispatch({
+        effects: effect.of(errors ?? []),
+      });
+    }, [errors]);
 
     return (
       <div
