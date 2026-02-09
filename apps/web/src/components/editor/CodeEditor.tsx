@@ -11,10 +11,18 @@ interface RemoteCursorData {
   selection: CursorSelection;
 }
 
+interface BuildError {
+  type: string;
+  file: string;
+  line: number;
+  message: string;
+}
+
 interface CodeEditorProps {
   content: string;
   onChange: (value: string) => void;
   language?: string;
+  errors?: BuildError[];
   // Collaboration
   onDocChange?: (changes: DocChange[]) => void;
   onCursorChange?: (selection: CursorSelection) => void;
@@ -25,6 +33,8 @@ interface CodeEditorProps {
 export interface CodeEditorHandle {
   highlightText: (text: string) => void;
   scrollToLine: (line: number) => void;
+  getScrollPosition: () => number;
+  setScrollPosition: (pos: number) => void;
 }
 
 // ─── CodeEditor ─────────────────────────────────────
@@ -35,6 +45,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
       content,
       onChange,
       language = "latex",
+      errors,
       onDocChange,
       onCursorChange,
       remoteChanges,
@@ -45,6 +56,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
     const containerRef = useRef<HTMLDivElement>(null);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const viewRef = useRef<any>(null);
+    const contentRef = useRef(content);
+    contentRef.current = content;
     const onChangeRef = useRef(onChange);
     const onDocChangeRef = useRef(onDocChange);
     const onCursorChangeRef = useRef(onCursorChange);
@@ -71,38 +84,73 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           if (!view || !text || text.length < 3) return;
 
           const doc = view.state.doc.toString();
-          // Normalize whitespace for matching
-          const normalized = text.replace(/\s+/g, " ").trim();
-          const docNormalized = doc.replace(/\s+/g, " ");
-          const idx = docNormalized.indexOf(normalized);
-          if (idx === -1) return;
 
-          // Map normalized index back to original doc position
-          // Walk through original doc counting non-collapsed chars
-          let origFrom = 0;
-          let normCount = 0;
-          for (let i = 0; i < doc.length && normCount < idx; i++) {
-            origFrom = i + 1;
-            if (/\s/.test(doc[i])) {
-              // skip consecutive whitespace in normalized
-              while (i + 1 < doc.length && /\s/.test(doc[i + 1])) i++;
-            }
-            normCount++;
+          // Try exact match first
+          const exactIdx = doc.indexOf(text);
+          if (exactIdx !== -1) {
+            view.dispatch({
+              selection: { anchor: exactIdx, head: exactIdx + text.length },
+              scrollIntoView: true,
+            });
+            view.focus();
+            return;
           }
 
-          // For simplicity, use search to find exact match
-          const searchIdx = doc.indexOf(text);
-          const from = searchIdx !== -1 ? searchIdx : 0;
-          const to = searchIdx !== -1 ? searchIdx + text.length : 0;
+          // Whitespace-normalized matching: build a map from normalized
+          // positions back to original doc positions so we can select the
+          // correct range even when PDF whitespace differs from source.
+          const normChars: number[] = []; // normChars[i] = original index of normalized char i
+          let inWhitespace = false;
+          for (let i = 0; i < doc.length; i++) {
+            if (/\s/.test(doc[i])) {
+              if (!inWhitespace) {
+                normChars.push(i); // single space representative
+                inWhitespace = true;
+              }
+            } else {
+              normChars.push(i);
+              inWhitespace = false;
+            }
+          }
 
-          if (from === 0 && to === 0) return;
+          const docNormalized = doc.replace(/\s+/g, " ");
+          const searchNormalized = text.replace(/\s+/g, " ").trim();
+          const normIdx = docNormalized.indexOf(searchNormalized);
 
-          // Scroll to position and select
-          view.dispatch({
-            selection: { anchor: from, head: to },
-            scrollIntoView: true,
-          });
-          view.focus();
+          if (normIdx !== -1 && normIdx < normChars.length) {
+            const from = normChars[normIdx];
+            const normEnd = normIdx + searchNormalized.length - 1;
+            // Map the last normalized char back, then include up to the next
+            // original char to capture trailing content
+            let to: number;
+            if (normEnd < normChars.length) {
+              to = normChars[normEnd] + 1;
+            } else {
+              to = doc.length;
+            }
+
+            view.dispatch({
+              selection: { anchor: from, head: to },
+              scrollIntoView: true,
+            });
+            view.focus();
+            return;
+          }
+
+          // Last resort: try matching just the first few words
+          const words = searchNormalized.split(" ").filter(Boolean);
+          if (words.length >= 2) {
+            const partial = words.slice(0, Math.min(4, words.length)).join(" ");
+            const partialIdx = docNormalized.indexOf(partial);
+            if (partialIdx !== -1 && partialIdx < normChars.length) {
+              const from = normChars[partialIdx];
+              view.dispatch({
+                selection: { anchor: from, head: from },
+                scrollIntoView: true,
+              });
+              view.focus();
+            }
+          }
         },
         scrollToLine: (line: number) => {
           const view = viewRef.current;
@@ -113,6 +161,16 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           view.dispatch({
             effects: EV.scrollIntoView(lineInfo.from, { y: "center" }),
           });
+        },
+        getScrollPosition: () => {
+          const view = viewRef.current;
+          if (!view) return 0;
+          return view.scrollDOM.scrollTop;
+        },
+        setScrollPosition: (pos: number) => {
+          const view = viewRef.current;
+          if (!view) return;
+          view.scrollDOM.scrollTop = pos;
         },
       }),
       []
@@ -130,6 +188,12 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const remoteCursorFieldRef = useRef<any>(null);
 
+    // Error line decorations
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errorEffectRef = useRef<any>(null);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errorFieldRef = useRef<any>(null);
+
     // Initialize CodeMirror
     useEffect(() => {
       if (!containerRef.current) return;
@@ -143,11 +207,11 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           lineNumbers,
           highlightActiveLine,
           keymap,
-          drawSelection,
           highlightSpecialChars,
           Decoration,
           WidgetType,
           ViewPlugin,
+          MatchDecorator,
         } = await import("@codemirror/view");
         const {
           defaultHighlightStyle,
@@ -331,13 +395,98 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           }
         );
 
+        // ─── Error line decorations (zigzag underlines) ────
+        const setErrorsEffect = StateEffect.define<BuildError[]>();
+        errorEffectRef.current = setErrorsEffect;
+
+        const errorLineDeco = Decoration.line({ class: "cm-error-line" });
+
+        const errorField = StateField.define({
+          create() {
+            return Decoration.none;
+          },
+          update(value, tr) {
+            for (const e of tr.effects) {
+              if (e.is(setErrorsEffect)) {
+                const errors: BuildError[] = e.value;
+                if (errors.length === 0) return Decoration.none;
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const decos: any[] = [];
+                const docLines = tr.state.doc.lines;
+                for (const err of errors) {
+                  if (err.line >= 1 && err.line <= docLines) {
+                    const lineInfo = tr.state.doc.line(err.line);
+                    decos.push(errorLineDeco.range(lineInfo.from));
+                  }
+                }
+                decos.sort((a: { from: number }, b: { from: number }) => a.from - b.from);
+                return Decoration.set(decos);
+              }
+            }
+            if (tr.docChanged) {
+              return value.map(tr.changes);
+            }
+            return value;
+          },
+          provide: (f) => EditorView.decorations.from(f),
+        });
+        errorFieldRef.current = errorField;
+
+        // ─── Clickable URL links ───────────────────────────
+        const urlRe = /https?:\/\/[^\s)}\]>"'`]+/g;
+        const urlDeco = Decoration.mark({
+          class: "cm-url-link",
+        });
+        const urlMatcher = new MatchDecorator({
+          regexp: urlRe,
+          decoration: () => urlDeco,
+        });
+        const urlPlugin = ViewPlugin.fromClass(
+          class {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            decorations: any;
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            constructor(view: any) {
+              this.decorations = urlMatcher.createDeco(view);
+            }
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            update(update: any) {
+              this.decorations = urlMatcher.updateDeco(update, this.decorations);
+            }
+          },
+          {
+            decorations: (v) => v.decorations,
+            eventHandlers: {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              mousedown(event: MouseEvent, view: any) {
+                if (!event.ctrlKey && !event.metaKey) return false;
+                const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+                if (pos === null) return false;
+                const line = view.state.doc.lineAt(pos);
+                const lineText = line.text;
+                const localUrlRe = /https?:\/\/[^\s)}\]>"'`]+/g;
+                let m;
+                while ((m = localUrlRe.exec(lineText)) !== null) {
+                  const from = line.from + m.index;
+                  const to = from + m[0].length;
+                  if (pos >= from && pos <= to) {
+                    window.open(m[0], "_blank", "noopener");
+                    event.preventDefault();
+                    return true;
+                  }
+                }
+                return false;
+              },
+            },
+          }
+        );
+
         const state = EditorState.create({
-          doc: content,
+          doc: contentRef.current,
           extensions: [
             lineNumbers(),
             highlightActiveLine(),
             highlightSpecialChars(),
-            drawSelection(),
             indentOnInput(),
             bracketMatching(),
             closeBrackets(),
@@ -355,6 +504,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
             ]),
             remoteCursorField,
             remoteCursorPlugin,
+            errorField,
+            urlPlugin,
             EditorView.updateListener.of((update) => {
               if (update.docChanged && !isExternalUpdate.current) {
                 const value = update.state.doc.toString();
@@ -396,6 +547,20 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
         });
 
         viewRef.current = view;
+
+        // If content changed during async init, sync the editor to the latest value
+        const latestContent = contentRef.current;
+        if (view.state.doc.toString() !== latestContent) {
+          isExternalUpdate.current = true;
+          view.dispatch({
+            changes: {
+              from: 0,
+              to: view.state.doc.length,
+              insert: latestContent,
+            },
+          });
+          isExternalUpdate.current = false;
+        }
       }
 
       initEditor();
@@ -461,6 +626,17 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
         effects: effect.of(remoteCursors),
       });
     }, [remoteCursors]);
+
+    // Update error line decorations
+    useEffect(() => {
+      const view = viewRef.current;
+      const effect = errorEffectRef.current;
+      if (!view || !effect) return;
+
+      view.dispatch({
+        effects: effect.of(errors ?? []),
+      });
+    }, [errors]);
 
     return (
       <div

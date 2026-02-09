@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback, useEffect, forwardRef, useImperativeHandle } from "react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -30,6 +30,10 @@ interface PdfViewerProps {
   onTextSelect?: (text: string) => void;
 }
 
+export interface PdfViewerHandle {
+  saveScrollPosition: () => void;
+}
+
 // ─── Constants ──────────────────────────────────────
 
 const MIN_ZOOM = 0.25;
@@ -39,7 +43,7 @@ const ZOOM_WHEEL_SENSITIVITY = 0.002;
 
 // ─── PdfViewer ──────────────────────────────────────
 
-export function PdfViewer({ pdfUrl, loading, onTextSelect }: PdfViewerProps) {
+export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer({ pdfUrl, loading, onTextSelect }, ref) {
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [zoom, setZoom] = useState<number>(1);
@@ -50,6 +54,20 @@ export function PdfViewer({ pdfUrl, loading, onTextSelect }: PdfViewerProps) {
   const observerRef = useRef<IntersectionObserver | null>(null);
 
   const zoomPercent = Math.round(zoom * 100);
+
+  // Expose saveScrollPosition so parent can call it before triggering a rebuild
+  useImperativeHandle(ref, () => ({
+    saveScrollPosition: () => {
+      const container = containerRef.current;
+      if (!container) return;
+      const { scrollTop, scrollHeight, clientHeight } = container;
+      if (scrollHeight > clientHeight) {
+        scrollPositionRef.current = {
+          ratio: scrollTop / (scrollHeight - clientHeight),
+        };
+      }
+    },
+  }), []);
 
   // Measure container width for fit-to-width
   useEffect(() => {
@@ -65,33 +83,27 @@ export function PdfViewer({ pdfUrl, loading, onTextSelect }: PdfViewerProps) {
     return () => ro.disconnect();
   }, []);
 
-  // Save scroll position before URL changes (recompile)
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container || !pdfUrl) return;
-
-    const { scrollTop, scrollHeight, clientHeight } = container;
-    if (scrollHeight > clientHeight) {
-      scrollPositionRef.current = {
-        ratio: scrollTop / (scrollHeight - clientHeight),
-      };
-    }
-  }, [pdfUrl]);
-
   function onDocumentLoadSuccess({ numPages: n }: { numPages: number }) {
     setNumPages(n);
 
     if (scrollPositionRef.current && containerRef.current) {
       const { ratio } = scrollPositionRef.current;
-      requestAnimationFrame(() => {
-        requestAnimationFrame(() => {
-          const container = containerRef.current;
-          if (container) {
-            const { scrollHeight, clientHeight } = container;
-            container.scrollTop = ratio * (scrollHeight - clientHeight);
-          }
-        });
-      });
+      // Attempt restore multiple times — pages may not be fully rendered yet
+      let attempts = 0;
+      const tryRestore = () => {
+        const container = containerRef.current;
+        if (!container) return;
+        const { scrollHeight, clientHeight } = container;
+        if (scrollHeight > clientHeight) {
+          container.scrollTop = ratio * (scrollHeight - clientHeight);
+        }
+        attempts++;
+        // Retry a few times as pages render incrementally
+        if (attempts < 5) {
+          requestAnimationFrame(tryRestore);
+        }
+      };
+      requestAnimationFrame(tryRestore);
     }
   }
 
@@ -401,4 +413,4 @@ export function PdfViewer({ pdfUrl, loading, onTextSelect }: PdfViewerProps) {
       </div>
     </TooltipProvider>
   );
-}
+});

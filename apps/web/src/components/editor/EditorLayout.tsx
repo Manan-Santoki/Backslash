@@ -10,7 +10,7 @@ import { EditorHeader } from "@/components/editor/EditorHeader";
 import { FileTree } from "@/components/editor/FileTree";
 import { CodeEditor, CodeEditorHandle } from "@/components/editor/CodeEditor";
 import { EditorTabs } from "@/components/editor/EditorTabs";
-import { PdfViewer } from "@/components/editor/PdfViewer";
+import { PdfViewer, PdfViewerHandle } from "@/components/editor/PdfViewer";
 import { BuildLogs } from "@/components/editor/BuildLogs";
 import { ChatPanel } from "@/components/editor/ChatPanel";
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -157,6 +157,8 @@ export function EditorLayout({
   presenceUsers.forEach((u) => userColorMap.set(u.userId, u.color));
 
   const codeEditorRef = useRef<CodeEditorHandle>(null);
+  const pdfViewerRef = useRef<PdfViewerHandle>(null);
+  const editorScrollRef = useRef<number | null>(null);
   const savedContentRef = useRef<Map<string, string>>(new Map());
   const fileContentsRef = useRef<Map<string, string>>(new Map());
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -262,7 +264,17 @@ export function EditorLayout({
           setBuildErrors(logsData.errors ?? []);
 
           if (build.status === "success") {
+            // Save scroll positions before loading new PDF
+            pdfViewerRef.current?.saveScrollPosition();
+            editorScrollRef.current = codeEditorRef.current?.getScrollPosition() ?? null;
             setPdfUrl(`/api/projects/${project.id}/pdf?t=${Date.now()}`);
+            // Restore code editor scroll after React re-render
+            requestAnimationFrame(() => {
+              if (editorScrollRef.current !== null) {
+                codeEditorRef.current?.setScrollPosition(editorScrollRef.current);
+                editorScrollRef.current = null;
+              }
+            });
             setAutoCompileEnabled(true);
 
             // If file was changed during build, recompile
@@ -293,6 +305,7 @@ export function EditorLayout({
               clearTimeout(saveTimeoutRef.current);
               saveTimeoutRef.current = null;
             }
+            navigateToFirstError(logsData.errors ?? []);
           }
 
           resetCompileState();
@@ -339,7 +352,17 @@ export function EditorLayout({
       setBuildErrors((data.errors as LogError[]) ?? []);
 
       if (data.status === "success") {
+        // Save scroll positions before loading new PDF
+        pdfViewerRef.current?.saveScrollPosition();
+        editorScrollRef.current = codeEditorRef.current?.getScrollPosition() ?? null;
         setPdfUrl(`/api/projects/${project.id}/pdf?t=${Date.now()}`);
+        // Restore code editor scroll after React re-render
+        requestAnimationFrame(() => {
+          if (editorScrollRef.current !== null) {
+            codeEditorRef.current?.setScrollPosition(editorScrollRef.current);
+            editorScrollRef.current = null;
+          }
+        });
         setAutoCompileEnabled(true);
 
         // If file was changed during build, recompile with latest content
@@ -371,6 +394,7 @@ export function EditorLayout({
           clearTimeout(saveTimeoutRef.current);
           saveTimeoutRef.current = null;
         }
+        navigateToFirstError((data.errors as LogError[]) ?? []);
       }
 
       resetCompileState();
@@ -710,6 +734,43 @@ export function EditorLayout({
     codeEditorRef.current?.highlightText(text);
   }, []);
 
+  /** Navigate to the first build error's file and line */
+  const navigateToFirstError = useCallback(
+    (errors: LogError[]) => {
+      const firstError = errors.find((e) => e.type === "error" && e.line > 0);
+      if (!firstError) return;
+      const target = files.find(
+        (f) => f.path === firstError.file || f.path.endsWith(firstError.file) || `./${f.path}` === firstError.file
+      );
+      if (target) {
+        // Open the file if not already active
+        if (target.id !== activeFileIdRef.current) {
+          handleFileSelect(target.id, target.path);
+        }
+        // Scroll to the error line (delay to allow file content to load)
+        setTimeout(() => {
+          codeEditorRef.current?.scrollToLine(firstError.line);
+        }, 300);
+      }
+    },
+    [files, handleFileSelect]
+  );
+
+  // Filter build errors for the currently active file
+  const activeFileErrors = (() => {
+    if (!activeFileId || buildErrors.length === 0) return [];
+    const activeFile = files.find((f) => f.id === activeFileId);
+    if (!activeFile) return [];
+    return buildErrors.filter(
+      (e) => e.type === "error" && (
+        activeFile.path === e.file ||
+        activeFile.path.endsWith(e.file) ||
+        e.file.endsWith(activeFile.path) ||
+        `./${activeFile.path}` === e.file
+      )
+    );
+  })();
+
   const handleErrorClick = useCallback(
     (file: string, line: number) => {
       const target = files.find(
@@ -717,6 +778,10 @@ export function EditorLayout({
       );
       if (target) {
         handleFileSelect(target.id, target.path);
+        // Scroll to the error line after the file loads
+        setTimeout(() => {
+          codeEditorRef.current?.scrollToLine(line);
+        }, 200);
       }
     },
     [files, handleFileSelect]
@@ -805,7 +870,7 @@ export function EditorLayout({
                 />
               </Panel>
 
-              <PanelResizeHandle className="w-px bg-border hover:bg-accent transition-colors data-[resize-handle-active]:bg-accent" />
+              <PanelResizeHandle className="w-1.5 bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:bg-border" />
 
               {/* Code editor */}
               <Panel defaultSize={45} minSize={20}>
@@ -839,6 +904,7 @@ export function EditorLayout({
                           content={activeFileContent}
                           onChange={handleEditorChange}
                           language="latex"
+                          errors={activeFileErrors}
                           onDocChange={(changes) => {
                             if (activeFileId) sendDocChange(activeFileId, changes, Date.now());
                           }}
@@ -870,16 +936,16 @@ export function EditorLayout({
                 </div>
               </Panel>
 
-              <PanelResizeHandle className="w-px bg-border hover:bg-accent transition-colors data-[resize-handle-active]:bg-accent" />
+              <PanelResizeHandle className="w-1.5 bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:bg-border" />
 
               {/* PDF viewer */}
               <Panel defaultSize={40} minSize={15}>
-                <PdfViewer pdfUrl={pdfUrl} loading={pdfLoading} onTextSelect={handlePdfTextSelect} />
+                <PdfViewer ref={pdfViewerRef} pdfUrl={pdfUrl} loading={pdfLoading} onTextSelect={handlePdfTextSelect} />
               </Panel>
             </PanelGroup>
           </Panel>
 
-          <PanelResizeHandle className="h-px bg-border hover:bg-accent transition-colors data-[resize-handle-active]:bg-accent" />
+          <PanelResizeHandle className="h-1.5 bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-x-0 after:top-1/2 after:-translate-y-1/2 after:h-px after:bg-border" />
 
           {/* Build logs */}
           <Panel defaultSize={20} minSize={5} collapsible collapsedSize={4}>

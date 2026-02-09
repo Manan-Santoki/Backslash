@@ -179,6 +179,7 @@ body {
   height: 100%;
   display: flex;
   flex-direction: column;
+  background-color: var(--color-editor-bg);
 }
 
 .cm-scroller {
@@ -188,9 +189,10 @@ body {
   line-height: 1.6;
 }
 
-/* Editor content background */
+/* Editor content — background must be transparent so the selection layer
+   (drawn at z-index:-2 between .cm-editor and .cm-content) remains visible */
 .cm-content {
-  background-color: var(--color-editor-bg);
+  background-color: transparent;
   color: var(--color-text-primary);
   padding: 8px 0;
 }
@@ -223,12 +225,12 @@ body {
   color: var(--color-text-primary);
 }
 
-/* Selection styling */
-.cm-selectionBackground {
+/* Selection styling — native browser selection */
+.cm-content ::selection {
   background-color: var(--color-editor-selection) !important;
 }
 
-.cm-focused .cm-selectionBackground {
+.cm-line ::selection {
   background-color: var(--color-editor-selection) !important;
 }
 
@@ -259,6 +261,34 @@ body {
 [data-theme="light"] .cm-property { color: #e45649; }
 [data-theme="light"] .cm-definition { color: #4078f2; }
 [data-theme="light"] .cm-builtin { color: #c18401; }
+
+/* Error line zigzag underline */
+.cm-error-line {
+  background-color: rgba(243, 139, 168, 0.08);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='3'%3E%3Cpath d='M0 3 L1.5 0 L3 3 L4.5 0 L6 3' fill='none' stroke='%23f38ba8' stroke-width='0.8'/%3E%3C/svg%3E");
+  background-repeat: repeat-x;
+  background-position: bottom left;
+  background-size: 6px 3px;
+  padding-bottom: 3px;
+}
+
+[data-theme="light"] .cm-error-line {
+  background-color: rgba(210, 15, 57, 0.06);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='3'%3E%3Cpath d='M0 3 L1.5 0 L3 3 L4.5 0 L6 3' fill='none' stroke='%23d20f39' stroke-width='0.8'/%3E%3C/svg%3E");
+}
+
+/* Clickable URL links in editor */
+.cm-url-link {
+  color: var(--color-accent);
+  text-decoration: underline;
+  text-decoration-style: solid;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+.cm-url-link:hover {
+  color: var(--color-accent-hover);
+}
 
 /* Ensure editor fills container properly */
 .cm-editor.cm-focused {
