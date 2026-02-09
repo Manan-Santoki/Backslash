@@ -401,7 +401,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
                             : 2
                         }
                         renderTextLayer={true}
-                        renderAnnotationLayer={false}
+                        renderAnnotationLayer={true}
                       />
                     </div>
                   );

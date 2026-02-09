@@ -154,8 +154,25 @@ body {
 
 /* PDF text selection — use browser default */
 
+/* PDF annotation layer - clickable links */
 .react-pdf__Page__annotations {
-  display: none;
+  display: block !important;
+}
+
+.react-pdf__Page__annotations a {
+  color: var(--color-accent) !important;
+  text-decoration: underline !important;
+  cursor: pointer !important;
+  transition: all 0.15s ease;
+}
+
+.react-pdf__Page__annotations a:hover {
+  color: var(--color-accent-hover) !important;
+  background-color: rgba(137, 180, 250, 0.1) !important;
+}
+
+[data-theme="light"] .react-pdf__Page__annotations a:hover {
+  background-color: rgba(30, 102, 245, 0.08) !important;
 }
 
 /* Compilation progress bar */
