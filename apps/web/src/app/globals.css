@@ -204,6 +204,8 @@ body {
   overflow: auto;
   font-family: var(--font-mono) !important;
   line-height: 1.6;
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 /* Editor content — background must be transparent so the selection layer
@@ -242,13 +244,27 @@ body {
   color: var(--color-text-primary);
 }
 
-/* Selection styling — native browser selection */
-.cm-content ::selection {
-  background-color: var(--color-editor-selection) !important;
+/* Selection styling (native + drawSelection fallback) */
+.cm-content::selection,
+.cm-line::selection,
+.cm-line > span::selection {
+  background-color: rgba(137, 180, 250, 0.35) !important;
+  background-color: color-mix(in srgb, var(--color-accent) 35%, transparent) !important;
 }
 
-.cm-line ::selection {
-  background-color: var(--color-editor-selection) !important;
+.cm-selectionBackground {
+  background-color: rgba(137, 180, 250, 0.32) !important;
+  background-color: color-mix(in srgb, var(--color-accent) 32%, transparent) !important;
+}
+
+[data-theme="light"] .cm-content::selection,
+[data-theme="light"] .cm-line::selection,
+[data-theme="light"] .cm-line > span::selection {
+  background-color: rgba(30, 102, 245, 0.22) !important;
+}
+
+[data-theme="light"] .cm-selectionBackground {
+  background-color: rgba(30, 102, 245, 0.2) !important;
 }
 
 /* Cursor styling */
@@ -279,19 +295,19 @@ body {
 [data-theme="light"] .cm-definition { color: #4078f2; }
 [data-theme="light"] .cm-builtin { color: #c18401; }
 
-/* Error line zigzag underline */
-.cm-error-line {
-  background-color: rgba(243, 139, 168, 0.08);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='3'%3E%3Cpath d='M0 3 L1.5 0 L3 3 L4.5 0 L6 3' fill='none' stroke='%23f38ba8' stroke-width='0.8'/%3E%3C/svg%3E");
-  background-repeat: repeat-x;
-  background-position: bottom left;
-  background-size: 6px 3px;
-  padding-bottom: 3px;
+/* Error underline */
+.cm-error-underline {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--color-error);
+  text-decoration-thickness: 1.5px;
+  text-underline-offset: 2px;
+  background-color: rgba(243, 139, 168, 0.12);
+  background-color: color-mix(in srgb, var(--color-error) 12%, transparent);
 }
 
-[data-theme="light"] .cm-error-line {
-  background-color: rgba(210, 15, 57, 0.06);
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='6' height='3'%3E%3Cpath d='M0 3 L1.5 0 L3 3 L4.5 0 L6 3' fill='none' stroke='%23d20f39' stroke-width='0.8'/%3E%3C/svg%3E");
+[data-theme="light"] .cm-error-underline {
+  background-color: rgba(210, 15, 57, 0.08);
 }
 
 /* Clickable URL links in editor */

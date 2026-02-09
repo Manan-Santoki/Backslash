@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, type FormEvent } from "react";
 import { cn } from "@/lib/utils/cn";
-import { MessageCircle, Send, X, ChevronUp, ChevronDown } from "lucide-react";
+import { MessageCircle, Send, ChevronUp, ChevronDown } from "lucide-react";
 import type { ChatMessage } from "@backslash/shared";
 
 // ─── Types ──────────────────────────────────────────
@@ -13,6 +13,8 @@ interface ChatPanelProps {
   currentUserId: string;
   /** Map of userId → color for presence coloring */
   userColors: Map<string, string>;
+  /** Static share history entries shown at the top of chat */
+  shareHistoryEntries?: string[];
 }
 
 // ─── ChatPanel ──────────────────────────────────────
@@ -22,6 +24,7 @@ export function ChatPanel({
   onSendMessage,
   currentUserId,
   userColors,
+  shareHistoryEntries = [],
 }: ChatPanelProps) {
   const [collapsed, setCollapsed] = useState(true);
   const [input, setInput] = useState("");
@@ -91,6 +94,21 @@ export function ChatPanel({
         <>
           {/* Messages */}
           <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2 min-h-0">
+            {shareHistoryEntries.length > 0 && (
+              <div className="rounded-md border border-border bg-bg-primary/70 p-2">
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                  Share history
+                </p>
+                <div className="space-y-1">
+                  {shareHistoryEntries.map((entry, index) => (
+                    <p key={`${entry}-${index}`} className="text-[11px] text-text-secondary">
+                      {entry}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {messages.length === 0 && (
               <div className="flex items-center justify-center h-full">
                 <p className="text-xs text-text-muted">

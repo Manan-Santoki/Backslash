@@ -73,12 +73,32 @@ interface CurrentUser {
   name: string;
 }
 
+interface CollaboratorInfo {
+  id: string;
+  userId: string;
+  email: string;
+  name: string;
+  role: "viewer" | "editor";
+  createdAt: string;
+  expiresAt?: string | null;
+}
+
+interface PublicShareInfo {
+  enabled: boolean;
+  role: "viewer" | "editor";
+  expiresAt: string | null;
+  token?: string | null;
+  url?: string | null;
+}
+
 interface EditorLayoutProps {
   project: Project;
   files: ProjectFile[];
   lastBuild: Build | null;
   role?: "owner" | "viewer" | "editor";
   currentUser?: CurrentUser;
+  shareToken?: string | null;
+  isPublicShare?: boolean;
 }
 
 // ─── Editor Layout ──────────────────────────────────
@@ -89,6 +109,8 @@ export function EditorLayout({
   lastBuild: initialBuild,
   role = "owner",
   currentUser = { id: "", email: "", name: "" },
+  shareToken = null,
+  isPublicShare = false,
 }: EditorLayoutProps) {
   const [files, setFiles] = useState<ProjectFile[]>(initialFiles);
   const [openFiles, setOpenFiles] = useState<OpenFile[]>([]);
@@ -97,7 +119,11 @@ export function EditorLayout({
   const [compiling, setCompiling] = useState(false);
   const [pdfUrl, setPdfUrl] = useState<string | null>(
     initialBuild?.status === "success"
-      ? `/api/projects/${project.id}/pdf?t=${Date.now()}`
+      ? shareToken
+        ? `/api/projects/${project.id}/pdf?t=${Date.now()}&share=${encodeURIComponent(
+            shareToken
+          )}`
+        : `/api/projects/${project.id}/pdf?t=${Date.now()}`
       : null
   );
   const [buildStatus, setBuildStatus] = useState(
@@ -135,6 +161,8 @@ export function EditorLayout({
 
   const [presenceUsers, setPresenceUsers] = useState<PresenceUser[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [isSharedProject, setIsSharedProject] = useState(role !== "owner");
+  const [shareHistoryEntries, setShareHistoryEntries] = useState<string[]>([]);
 
   const [remoteChanges, setRemoteChanges] = useState<{
     fileId: string;
@@ -159,14 +187,112 @@ export function EditorLayout({
   const codeEditorRef = useRef<CodeEditorHandle>(null);
   const pdfViewerRef = useRef<PdfViewerHandle>(null);
   const editorScrollRef = useRef<number | null>(null);
+  const editorSelectionRef = useRef<{ anchor: number; head: number } | null>(
+    null
+  );
   const savedContentRef = useRef<Map<string, string>>(new Map());
   const fileContentsRef = useRef<Map<string, string>>(new Map());
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoOpenedMainRef = useRef(false);
+  const fileLoadRetriesRef = useRef<Map<string, number>>(new Map());
 
   const activeFileIdRef = useRef<string | null>(null);
   activeFileIdRef.current = activeFileId;
+
+  const withShareToken = useCallback(
+    (url: string) => {
+      if (!shareToken) return url;
+      const separator = url.includes("?") ? "&" : "?";
+      return `${url}${separator}share=${encodeURIComponent(shareToken)}`;
+    },
+    [shareToken]
+  );
+
+  const saveViewPositionsBeforeBuild = useCallback(() => {
+    pdfViewerRef.current?.saveScrollPosition();
+    editorScrollRef.current = codeEditorRef.current?.getScrollPosition() ?? null;
+    editorSelectionRef.current = codeEditorRef.current?.getSelection() ?? null;
+  }, []);
+
+  const restoreViewPositionsAfterBuild = useCallback(() => {
+    requestAnimationFrame(() => {
+      if (editorScrollRef.current !== null) {
+        codeEditorRef.current?.setScrollPosition(editorScrollRef.current);
+      }
+      if (editorSelectionRef.current) {
+        codeEditorRef.current?.setSelection(editorSelectionRef.current);
+      }
+      editorScrollRef.current = null;
+      editorSelectionRef.current = null;
+    });
+  }, []);
+
+  const formatExpiry = useCallback((expiresAt: string | null | undefined) => {
+    if (!expiresAt) return "no expiry";
+    const when = new Date(expiresAt);
+    return `expires ${when.toLocaleString()}`;
+  }, []);
+
+  const refreshShareState = useCallback(async () => {
+    if (shareToken) {
+      setIsSharedProject(true);
+      setShareHistoryEntries([]);
+      return;
+    }
+
+    try {
+      const [collabRes, publicRes] = await Promise.all([
+        fetch(`/api/projects/${project.id}/collaborators`, { cache: "no-store" }),
+        fetch(`/api/projects/${project.id}/share-link`, { cache: "no-store" }),
+      ]);
+
+      const collaborators: CollaboratorInfo[] = collabRes.ok
+        ? (await collabRes.json()).collaborators ?? []
+        : [];
+
+      const publicShare: PublicShareInfo = publicRes.ok
+        ? (await publicRes.json()).share ?? {
+            enabled: false,
+            role: "viewer",
+            expiresAt: null,
+          }
+        : { enabled: false, role: "viewer", expiresAt: null };
+
+      const historyEntries: string[] = [];
+
+      if (publicShare.enabled) {
+        historyEntries.push(
+          `Shared with anyone (${publicShare.role}, ${formatExpiry(
+            publicShare.expiresAt
+          )})`
+        );
+      }
+
+      collaborators
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+        )
+        .forEach((collab) => {
+          historyEntries.push(
+            `Shared with ${collab.email} (${collab.role}, ${formatExpiry(
+              collab.expiresAt
+            )})`
+          );
+        });
+
+      setShareHistoryEntries(historyEntries);
+      setIsSharedProject(
+        role !== "owner" || publicShare.enabled || collaborators.length > 0
+      );
+    } catch {
+      setShareHistoryEntries([]);
+      setIsSharedProject(role !== "owner");
+    }
+  }, [formatExpiry, project.id, role, shareToken]);
 
   // ─── Helpers ───────────────────────────────────────
 
@@ -210,12 +336,14 @@ export function EditorLayout({
     async (fileId: string) => {
       try {
         const res = await fetch(
-          `/api/projects/${project.id}/files/${fileId}`
+          withShareToken(`/api/projects/${project.id}/files/${fileId}`),
+          { cache: "no-store" }
         );
         if (res.ok) {
           const data = await res.json();
           const content = data.content ?? "";
           fileContentsRef.current.set(fileId, content);
+          fileLoadRetriesRef.current.delete(fileId);
           if (activeFileIdRef.current === fileId) {
             setActiveFileContent(content);
           }
@@ -225,14 +353,34 @@ export function EditorLayout({
             next.delete(fileId);
             return next;
           });
+        } else {
+          const retries = fileLoadRetriesRef.current.get(fileId) ?? 0;
+          if (retries < 2) {
+            fileLoadRetriesRef.current.set(fileId, retries + 1);
+            setTimeout(() => {
+              if (activeFileIdRef.current === fileId) {
+                fetchFileContent(fileId);
+              }
+            }, 300);
+          }
         }
       } catch {
+        const retries = fileLoadRetriesRef.current.get(fileId) ?? 0;
+        if (retries < 2) {
+          fileLoadRetriesRef.current.set(fileId, retries + 1);
+          setTimeout(() => {
+            if (activeFileIdRef.current === fileId) {
+              fetchFileContent(fileId);
+            }
+          }, 300);
+          return;
+        }
         if (activeFileIdRef.current === fileId) {
           setActiveFileContent("");
         }
       }
     },
-    [project.id]
+    [project.id, withShareToken]
   );
 
   // ─── Polling fallback for build completion ────────
@@ -242,7 +390,9 @@ export function EditorLayout({
 
     pollIntervalRef.current = setInterval(async () => {
       try {
-        const logsRes = await fetch(`/api/projects/${project.id}/logs`);
+        const logsRes = await fetch(withShareToken(`/api/projects/${project.id}/logs`), {
+          cache: "no-store",
+        });
         if (!logsRes.ok) return;
 
         const logsData = await logsRes.json();
@@ -264,24 +414,18 @@ export function EditorLayout({
           setBuildErrors(logsData.errors ?? []);
 
           if (build.status === "success") {
-            // Save scroll positions before loading new PDF
-            pdfViewerRef.current?.saveScrollPosition();
-            editorScrollRef.current = codeEditorRef.current?.getScrollPosition() ?? null;
-            setPdfUrl(`/api/projects/${project.id}/pdf?t=${Date.now()}`);
-            // Restore code editor scroll after React re-render
-            requestAnimationFrame(() => {
-              if (editorScrollRef.current !== null) {
-                codeEditorRef.current?.setScrollPosition(editorScrollRef.current);
-                editorScrollRef.current = null;
-              }
-            });
+            setPdfUrl(withShareToken(`/api/projects/${project.id}/pdf?t=${Date.now()}`));
+            restoreViewPositionsAfterBuild();
             setAutoCompileEnabled(true);
 
             // If file was changed during build, recompile
             if (pendingRecompileRef.current) {
               pendingRecompileRef.current = false;
               setBuildStatus("queued");
-              fetch(`/api/projects/${project.id}/compile`, { method: "POST" })
+              saveViewPositionsBeforeBuild();
+              fetch(withShareToken(`/api/projects/${project.id}/compile`), {
+                method: "POST",
+              })
                 .then((res) => {
                   if (res.ok) {
                     startBuildPolling();
@@ -325,7 +469,14 @@ export function EditorLayout({
         resetCompileState();
       }
     }, 120_000);
-  }, [project.id, clearAllPolling, resetCompileState]);
+  }, [
+    clearAllPolling,
+    project.id,
+    resetCompileState,
+    restoreViewPositionsAfterBuild,
+    saveViewPositionsBeforeBuild,
+    withShareToken,
+  ]);
 
   // ─── WebSocket Integration ────────────────────────
 
@@ -335,6 +486,7 @@ export function EditorLayout({
     sendDocChange,
     sendChatMessage,
   } = useWebSocket(project.id, {
+    shareToken,
     onBuildStatus: (data) => {
       setBuildStatus(data.status);
       if (!compilingRef.current) {
@@ -352,17 +504,8 @@ export function EditorLayout({
       setBuildErrors((data.errors as LogError[]) ?? []);
 
       if (data.status === "success") {
-        // Save scroll positions before loading new PDF
-        pdfViewerRef.current?.saveScrollPosition();
-        editorScrollRef.current = codeEditorRef.current?.getScrollPosition() ?? null;
-        setPdfUrl(`/api/projects/${project.id}/pdf?t=${Date.now()}`);
-        // Restore code editor scroll after React re-render
-        requestAnimationFrame(() => {
-          if (editorScrollRef.current !== null) {
-            codeEditorRef.current?.setScrollPosition(editorScrollRef.current);
-            editorScrollRef.current = null;
-          }
-        });
+        setPdfUrl(withShareToken(`/api/projects/${project.id}/pdf?t=${Date.now()}`));
+        restoreViewPositionsAfterBuild();
         setAutoCompileEnabled(true);
 
         // If file was changed during build, recompile with latest content
@@ -370,7 +513,10 @@ export function EditorLayout({
           pendingRecompileRef.current = false;
           setBuildStatus("queued");
           setPdfLoading(true);
-          fetch(`/api/projects/${project.id}/compile`, { method: "POST" })
+          saveViewPositionsBeforeBuild();
+          fetch(withShareToken(`/api/projects/${project.id}/compile`), {
+            method: "POST",
+          })
             .then((res) => {
               if (res.ok) {
                 startBuildPolling();
@@ -520,6 +666,8 @@ export function EditorLayout({
 
       setRemoteCursors(new Map());
       setActiveFileId(fileId);
+      const cached = fileContentsRef.current.get(fileId);
+      setActiveFileContent(cached ?? "");
 
       const alreadyOpen = openFiles.some((f) => f.id === fileId);
       if (!alreadyOpen) {
@@ -563,7 +711,7 @@ export function EditorLayout({
       const willCompile = shouldCompile && !compilingRef.current;
 
       try {
-        await fetch(`/api/projects/${project.id}/files/${activeFileId}`, {
+        await fetch(withShareToken(`/api/projects/${project.id}/files/${activeFileId}`), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content, autoCompile: willCompile }),
@@ -576,12 +724,13 @@ export function EditorLayout({
           return next;
         });
 
-        if (willCompile) {
-          compilingRef.current = true;
-          pendingRecompileRef.current = false;
-          setCompiling(true);
-          setBuildStatus("queued");
-          setPdfLoading(true);
+      if (willCompile) {
+        saveViewPositionsBeforeBuild();
+        compilingRef.current = true;
+        pendingRecompileRef.current = false;
+        setCompiling(true);
+        setBuildStatus("queued");
+        setPdfLoading(true);
           startBuildPolling();
         } else if (shouldCompile && compilingRef.current) {
           // Wanted to compile but already compiling — recompile after current build
@@ -591,7 +740,7 @@ export function EditorLayout({
         // Save failed silently
       }
     },
-    [activeFileId, project.id, startBuildPolling]
+    [activeFileId, project.id, saveViewPositionsBeforeBuild, startBuildPolling, withShareToken]
   );
 
   const handleEditorChange = useCallback(
@@ -645,6 +794,7 @@ export function EditorLayout({
   const handleCompile = useCallback(async () => {
     if (compilingRef.current) return;
 
+    saveViewPositionsBeforeBuild();
     compilingRef.current = true;
     pendingRecompileRef.current = false;
     setCompiling(true);
@@ -652,7 +802,7 @@ export function EditorLayout({
     setPdfLoading(true);
 
     try {
-      const res = await fetch(`/api/projects/${project.id}/compile`, {
+      const res = await fetch(withShareToken(`/api/projects/${project.id}/compile`), {
         method: "POST",
       });
 
@@ -667,7 +817,13 @@ export function EditorLayout({
       setBuildStatus("error");
       resetCompileState();
     }
-  }, [project.id, startBuildPolling, resetCompileState]);
+  }, [
+    project.id,
+    resetCompileState,
+    saveViewPositionsBeforeBuild,
+    startBuildPolling,
+    withShareToken,
+  ]);
 
   // ─── Hard safety timeout ──────────────────────────
   // If we're stuck in "compiling" for 3 minutes, force-reset.
@@ -711,7 +867,9 @@ export function EditorLayout({
 
   const refreshFiles = useCallback(async () => {
     try {
-      const res = await fetch(`/api/projects/${project.id}/files`);
+      const res = await fetch(withShareToken(`/api/projects/${project.id}/files`), {
+        cache: "no-store",
+      });
       if (res.ok) {
         const data = await res.json();
         setFiles(data.files);
@@ -719,7 +877,7 @@ export function EditorLayout({
     } catch {
       // Silently fail
     }
-  }, [project.id]);
+  }, [project.id, withShareToken]);
 
   const isImageFile = useCallback(
     (fileId: string | null): boolean => {
@@ -774,7 +932,11 @@ export function EditorLayout({
   const handleErrorClick = useCallback(
     (file: string, line: number) => {
       const target = files.find(
-        (f) => f.path === file || f.path.endsWith(file)
+        (f) =>
+          f.path === file ||
+          f.path.endsWith(file) ||
+          `./${f.path}` === file ||
+          file.endsWith(f.path)
       );
       if (target) {
         handleFileSelect(target.id, target.path);
@@ -815,17 +977,33 @@ export function EditorLayout({
     [followingUserId, presenceUsers, activeFileId, files, handleFileSelect, remoteCursors]
   );
 
-  // Auto-open main tex file on mount
+  // Refresh share state (for header badge + chat visibility/history)
   useEffect(() => {
-    if (project.mainFile && files.length > 0 && openFiles.length === 0) {
-      const mainFile = files.find((f) => f.path === project.mainFile);
-      if (mainFile) {
-        handleFileSelect(mainFile.id, mainFile.path);
-      }
+    refreshShareState();
+  }, [refreshShareState]);
+
+  // Auto-open main tex file once files are available
+  useEffect(() => {
+    if (autoOpenedMainRef.current) return;
+    if (activeFileId || openFiles.length > 0) {
+      autoOpenedMainRef.current = true;
+      return;
     }
-    // Only run on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    if (files.length === 0) return;
+
+    const mainFile = files.find((f) => f.path === project.mainFile);
+    if (mainFile) {
+      autoOpenedMainRef.current = true;
+      handleFileSelect(mainFile.id, mainFile.path);
+      return;
+    }
+
+    const fallbackTex = files.find((f) => !f.isDirectory && f.path.endsWith(".tex"));
+    if (fallbackTex) {
+      autoOpenedMainRef.current = true;
+      handleFileSelect(fallbackTex.id, fallbackTex.path);
+    }
+  }, [activeFileId, files, handleFileSelect, openFiles.length, project.mainFile]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -851,14 +1029,26 @@ export function EditorLayout({
         role={role}
         followingUserId={followingUserId}
         onFollowUser={handleFollowUser}
+        isSharedProject={isSharedProject}
+        onShareUpdated={refreshShareState}
+        shareToken={shareToken}
+        canManageShare={!isPublicShare && role === "owner"}
       />
 
       {/* Main content area */}
       <div className="flex-1 min-h-0 relative">
-        <PanelGroup direction="vertical">
+        <PanelGroup
+          direction="vertical"
+          className="h-full w-full"
+          autoSaveId={`editor-layout-${project.id}-vertical`}
+        >
           {/* Editor panels */}
           <Panel defaultSize={80} minSize={40}>
-            <PanelGroup direction="horizontal">
+            <PanelGroup
+              direction="horizontal"
+              className="h-full w-full"
+              autoSaveId={`editor-layout-${project.id}-horizontal`}
+            >
               {/* File tree */}
               <Panel defaultSize={15} minSize={10} collapsible>
                 <FileTree
@@ -867,10 +1057,11 @@ export function EditorLayout({
                   activeFileId={activeFileId}
                   onFileSelect={handleFileSelect}
                   onFilesChanged={refreshFiles}
+                  shareToken={shareToken}
                 />
               </Panel>
 
-              <PanelResizeHandle className="w-1.5 bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:bg-border" />
+              <PanelResizeHandle className="w-2 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:bg-border" />
 
               {/* Code editor */}
               <Panel defaultSize={45} minSize={20}>
@@ -893,7 +1084,9 @@ export function EditorLayout({
                       isImageFile(activeFileId) ? (
                         <div className="flex h-full items-center justify-center bg-bg-primary p-4 overflow-auto">
                           <img
-                            src={`/api/projects/${project.id}/files/${activeFileId}?raw`}
+                            src={withShareToken(
+                              `/api/projects/${project.id}/files/${activeFileId}?raw`
+                            )}
                             alt={openFiles.find((f) => f.id === activeFileId)?.path ?? "Image"}
                             className="max-w-full max-h-full object-contain"
                           />
@@ -936,7 +1129,7 @@ export function EditorLayout({
                 </div>
               </Panel>
 
-              <PanelResizeHandle className="w-1.5 bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:bg-border" />
+              <PanelResizeHandle className="w-2 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:bg-border" />
 
               {/* PDF viewer */}
               <Panel defaultSize={40} minSize={15}>
@@ -945,7 +1138,7 @@ export function EditorLayout({
             </PanelGroup>
           </Panel>
 
-          <PanelResizeHandle className="h-1.5 bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-x-0 after:top-1/2 after:-translate-y-1/2 after:h-px after:bg-border" />
+          <PanelResizeHandle className="h-2 cursor-row-resize touch-none bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-x-0 after:top-1/2 after:-translate-y-1/2 after:h-px after:bg-border" />
 
           {/* Build logs */}
           <Panel defaultSize={20} minSize={5} collapsible collapsedSize={4}>
@@ -960,12 +1153,15 @@ export function EditorLayout({
         </PanelGroup>
 
         {/* Chat Panel */}
-        <ChatPanel
-          messages={chatMessages}
-          onSendMessage={sendChatMessage}
-          currentUserId={currentUser.id}
-          userColors={userColorMap}
-        />
+        {isSharedProject && (
+          <ChatPanel
+            messages={chatMessages}
+            onSendMessage={sendChatMessage}
+            currentUserId={currentUser.id}
+            userColors={userColorMap}
+            shareHistoryEntries={shareHistoryEntries}
+          />
+        )}
       </div>
     </div>
   );

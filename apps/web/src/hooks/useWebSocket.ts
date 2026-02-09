@@ -30,6 +30,7 @@ interface BuildStatusData {
 }
 
 interface UseWebSocketOptions {
+  shareToken?: string | null;
   // Build events
   onBuildStatus?: (data: BuildStatusData) => void;
   onBuildComplete?: (data: BuildCompleteData) => void;
@@ -167,6 +168,9 @@ export function useWebSocket(
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
+      auth: optionsRef.current.shareToken
+        ? { shareToken: optionsRef.current.shareToken }
+        : undefined,
     });
 
     socket.on("connect", () => {
@@ -263,7 +267,7 @@ export function useWebSocket(
     return () => {
       socket.disconnect();
     };
-  }, [projectId]);
+  }, [projectId, options.shareToken]);
 
   return {
     socket: socketRef,

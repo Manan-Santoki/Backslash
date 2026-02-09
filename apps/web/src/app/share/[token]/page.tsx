@@ -5,8 +5,6 @@ import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { EditorLayout } from "@/components/editor/EditorLayout";
 
-// ─── Types ──────────────────────────────────────────
-
 interface ProjectFile {
   id: string;
   projectId: string;
@@ -43,11 +41,12 @@ interface Project {
   updatedAt: string;
 }
 
-interface ProjectData {
+interface ShareData {
   project: Project;
   files: ProjectFile[];
   lastBuild: Build | null;
-  role?: "owner" | "viewer" | "editor";
+  role: "viewer" | "editor";
+  shareToken: string;
 }
 
 interface CurrentUser {
@@ -56,16 +55,14 @@ interface CurrentUser {
   name: string;
 }
 
-// ─── Editor Page ────────────────────────────────────
-
-export default function EditorPage({
+export default function SharedEditorPage({
   params,
 }: {
-  params: Promise<{ projectId: string }>;
+  params: Promise<{ token: string }>;
 }) {
-  const { projectId } = use(params);
+  const { token } = use(params);
 
-  const [data, setData] = useState<ProjectData | null>(null);
+  const [data, setData] = useState<ShareData | null>(null);
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -73,17 +70,17 @@ export default function EditorPage({
   useEffect(() => {
     async function fetchData() {
       try {
-        const [projectRes, userRes] = await Promise.all([
-          fetch(`/api/projects/${projectId}`, { cache: "no-store" }),
+        const [shareRes, userRes] = await Promise.all([
+          fetch(`/api/share/${token}`, { cache: "no-store" }),
           fetch("/api/auth/me", { cache: "no-store" }),
         ]);
 
-        if (!projectRes.ok) {
+        if (!shareRes.ok) {
           setError(true);
           return;
         }
 
-        const json = await projectRes.json();
+        const json = await shareRes.json();
         setData(json);
 
         if (userRes.ok) {
@@ -98,38 +95,35 @@ export default function EditorPage({
     }
 
     fetchData();
-  }, [projectId]);
+  }, [token]);
 
-  // Loading state
   if (loading) {
     return (
-      <div className="flex h-full w-full items-center justify-center bg-bg-primary">
+      <div className="flex h-screen w-screen items-center justify-center bg-bg-primary">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="h-8 w-8 animate-spin text-accent" />
-          <span className="text-sm text-text-muted">Loading project...</span>
+          <span className="text-sm text-text-muted">Loading shared project...</span>
         </div>
       </div>
     );
   }
 
-  // Error state
   if (error || !data) {
     return (
-      <div className="flex h-full w-full items-center justify-center bg-bg-primary">
+      <div className="flex h-screen w-screen items-center justify-center bg-bg-primary">
         <div className="flex flex-col items-center gap-4 text-center">
           <div className="text-4xl font-bold text-text-muted">404</div>
           <h2 className="text-lg font-semibold text-text-primary">
-            Project not found
+            Share link is invalid or expired
           </h2>
           <p className="text-sm text-text-secondary">
-            The project you are looking for does not exist or you do not have
-            access.
+            This public link is no longer available.
           </p>
           <Link
-            href="/dashboard"
+            href="/login"
             className="mt-2 rounded-lg bg-accent px-4 py-2 text-sm font-medium text-bg-primary transition-colors hover:bg-accent-hover"
           >
-            Back to Dashboard
+            Go to Login
           </Link>
         </div>
       </div>
@@ -137,12 +131,16 @@ export default function EditorPage({
   }
 
   return (
-    <EditorLayout
-      project={data.project}
-      files={data.files}
-      lastBuild={data.lastBuild}
-      role={data.role ?? "owner"}
-      currentUser={currentUser ?? { id: "", email: "", name: "" }}
-    />
+    <div className="h-screen w-screen overflow-hidden">
+      <EditorLayout
+        project={data.project}
+        files={data.files}
+        lastBuild={data.lastBuild}
+        role={data.role}
+        currentUser={currentUser ?? { id: "", email: "", name: "" }}
+        shareToken={data.shareToken}
+        isPublicShare={true}
+      />
+    </div>
   );
 }

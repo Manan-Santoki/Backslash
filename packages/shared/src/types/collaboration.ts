@@ -11,6 +11,13 @@ export interface Collaborator {
   name: string;
   role: ShareRole;
   createdAt: string;
+  expiresAt?: string | null;
+}
+
+export interface PublicShareSettings {
+  enabled: boolean;
+  role: ShareRole;
+  expiresAt: string | null;
 }
 
 // ─── Presence ───────────────────────────────────────

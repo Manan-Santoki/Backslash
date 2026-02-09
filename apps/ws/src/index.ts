@@ -131,7 +131,8 @@ async function validateSession(
  */
 async function checkProjectAccess(
   userId: string,
-  projectId: string
+  projectId: string,
+  shareToken?: string | null
 ): Promise<{ access: boolean; role: "owner" | "viewer" | "editor" }> {
   try {
     // Check if owner
@@ -147,11 +148,44 @@ async function checkProjectAccess(
     // Check if shared
     const shareResult = await sql`
       SELECT role FROM project_shares
-      WHERE project_id = ${projectId} AND user_id = ${userId}
+      WHERE project_id = ${projectId}
+        AND user_id = ${userId}
+        AND (expires_at IS NULL OR expires_at > NOW())
       LIMIT 1
     `;
     if (shareResult.length > 0) {
       return { access: true, role: shareResult[0].role as "viewer" | "editor" };
+    }
+
+    // Check if project is shared with anyone
+    const publicShareResult = await sql`
+      SELECT role FROM project_public_shares
+      WHERE project_id = ${projectId}
+        AND (expires_at IS NULL OR expires_at > NOW())
+      LIMIT 1
+    `;
+    if (publicShareResult.length > 0) {
+      if (shareToken) {
+        const tokenShareResult = await sql`
+          SELECT role FROM project_public_shares
+          WHERE project_id = ${projectId}
+            AND token = ${shareToken}
+            AND (expires_at IS NULL OR expires_at > NOW())
+          LIMIT 1
+        `;
+        if (tokenShareResult.length > 0) {
+          return {
+            access: true,
+            role: tokenShareResult[0].role as "viewer" | "editor",
+          };
+        }
+        return { access: false, role: "viewer" };
+      }
+
+      return {
+        access: true,
+        role: publicShareResult[0].role as "viewer" | "editor",
+      };
     }
 
     return { access: false, role: "viewer" };
@@ -254,17 +288,39 @@ io.use(async (socket, next) => {
     // Extract session token from cookie header or auth query param
     const cookieHeader = socket.handshake.headers.cookie;
     let token = extractCookieToken(cookieHeader);
+    const shareToken =
+      (socket.handshake.auth?.shareToken as string | undefined) ?? null;
 
     // Fallback: check query param (for environments where cookies aren't forwarded)
     if (!token && socket.handshake.auth?.token) {
       token = socket.handshake.auth.token as string;
     }
 
+    if (!token && shareToken) {
+      socket.data.userId = `anon_${randomUUID()}`;
+      socket.data.email = "anonymous@public-link";
+      socket.data.name = "Guest";
+      socket.data.color = nextColor();
+      socket.data.isAnonymous = true;
+      socket.data.shareToken = shareToken;
+      return next();
+    }
+
     if (!token) {
-      return next(new Error("Authentication required"));
+      return next(new Error("Authentication required or valid share link required"));
     }
 
     const user = await validateSession(token);
+    if (!user && shareToken) {
+      socket.data.userId = `anon_${randomUUID()}`;
+      socket.data.email = "anonymous@public-link";
+      socket.data.name = "Guest";
+      socket.data.color = nextColor();
+      socket.data.isAnonymous = true;
+      socket.data.shareToken = shareToken;
+      return next();
+    }
+
     if (!user) {
       return next(new Error("Invalid or expired session"));
     }
@@ -274,6 +330,8 @@ io.use(async (socket, next) => {
     socket.data.email = user.email;
     socket.data.name = user.name;
     socket.data.color = nextColor();
+    socket.data.isAnonymous = false;
+    socket.data.shareToken = shareToken;
 
     next();
   } catch (err) {
@@ -286,11 +344,13 @@ io.use(async (socket, next) => {
 // ─── Connection Handler ────────────────────────────
 
 io.on("connection", (socket) => {
-  const { userId, name, email, color } = socket.data;
+  const { userId, name, email, color, isAnonymous, shareToken } = socket.data;
   console.log(`[WS] User connected: ${name} (${userId})`);
 
   // Automatically join the user's personal room
-  socket.join(getUserRoom(userId));
+  if (!isAnonymous) {
+    socket.join(getUserRoom(userId));
+  }
 
   // ── Join project room ──────────────────────
 
@@ -298,7 +358,7 @@ io.on("connection", (socket) => {
     if (!projectId || typeof projectId !== "string") return;
 
     // Check access (owner or shared)
-    const { access, role } = await checkProjectAccess(userId, projectId);
+    const { access, role } = await checkProjectAccess(userId, projectId, shareToken);
     if (!access) {
       socket.emit("build:status", {
         projectId,

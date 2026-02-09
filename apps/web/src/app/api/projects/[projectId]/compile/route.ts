@@ -1,8 +1,7 @@
 import { db } from "@/lib/db";
 import { projects, builds } from "@/lib/db/schema";
-import { withAuth } from "@/lib/auth/middleware";
+import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { addCompileJob } from "@/lib/compiler/runner";
-import { checkProjectAccess } from "@/lib/db/queries/projects";
 import { healthCheck as dockerHealthCheck, getDockerClient } from "@/lib/compiler/docker";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
@@ -15,19 +14,22 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
-  return withAuth(request, async (_req, user) => {
-    try {
-      const { projectId } = await params;
+  try {
+    const { projectId } = await params;
 
-      const access = await checkProjectAccess(user.id, projectId);
-      if (!access.access || access.role === "viewer") {
-        return NextResponse.json(
-          { error: "Permission denied" },
-          { status: 403 }
-        );
-      }
+    const access = await resolveProjectAccess(request, projectId);
+    if (!access.access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+    if (access.role === "viewer") {
+      return NextResponse.json(
+        { error: "Permission denied" },
+        { status: 403 }
+      );
+    }
 
-      const project = access.project;
+    const project = access.project;
+    const actorUserId = access.user?.id ?? project.userId;
 
       // ── Pre-flight: verify Docker is reachable ───────
       const dockerOk = await dockerHealthCheck();
@@ -63,16 +65,21 @@ export async function POST(
       await db.insert(builds).values({
         id: buildId,
         projectId,
-        userId: user.id,
+        userId: actorUserId,
         status: "queued",
         engine: project.engine,
       });
+
+      await db
+        .update(projects)
+        .set({ updatedAt: new Date() })
+        .where(eq(projects.id, projectId));
 
       // Enqueue compile job
       await addCompileJob({
         buildId,
         projectId,
-        userId: user.id,
+        userId: actorUserId,
         engine: project.engine,
         mainFile: project.mainFile,
       });
@@ -85,12 +92,11 @@ export async function POST(
         },
         { status: 202 }
       );
-    } catch (error) {
-      console.error("Error triggering compilation:", error);
-      return NextResponse.json(
-        { error: "Internal server error" },
-        { status: 500 }
-      );
-    }
-  });
+  } catch (error) {
+    console.error("Error triggering compilation:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
 }

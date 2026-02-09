@@ -176,6 +176,7 @@ export const projectShares = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
     role: shareRoleEnum("role").default("viewer").notNull(),
+    expiresAt: timestamp("expires_at"),
     invitedBy: uuid("invited_by")
       .notNull()
       .references(() => users.id, { onDelete: "cascade" }),
@@ -185,6 +186,27 @@ export const projectShares = pgTable(
     uniqueIndex("shares_project_user_idx").on(table.projectId, table.userId),
     index("shares_user_idx").on(table.userId),
     index("shares_project_idx").on(table.projectId),
+    index("shares_expires_idx").on(table.expiresAt),
+  ]
+);
+
+export const projectPublicShares = pgTable(
+  "project_public_shares",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+    token: varchar("token", { length: 128 }).notNull(),
+    role: shareRoleEnum("role").default("viewer").notNull(),
+    expiresAt: timestamp("expires_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("public_shares_project_idx").on(table.projectId),
+    uniqueIndex("public_shares_token_idx").on(table.token),
+    index("public_shares_expires_idx").on(table.expiresAt),
   ]
 );
 
@@ -207,6 +229,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   files: many(projectFiles),
   builds: many(builds),
   shares: many(projectShares),
+  publicShare: many(projectPublicShares),
 }));
 
 export const projectFilesRelations = relations(projectFiles, ({ one }) => ({
@@ -235,3 +258,13 @@ export const projectSharesRelations = relations(projectShares, ({ one }) => ({
   }),
   user: one(users, { fields: [projectShares.userId], references: [users.id] }),
 }));
+
+export const projectPublicSharesRelations = relations(
+  projectPublicShares,
+  ({ one }) => ({
+    project: one(projects, {
+      fields: [projectPublicShares.projectId],
+      references: [projects.id],
+    }),
+  })
+);

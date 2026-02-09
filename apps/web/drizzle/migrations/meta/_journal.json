@@ -15,6 +15,20 @@
       "when": 1770452462206,
       "tag": "0001_harsh_human_fly",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1770643200000,
+      "tag": "0002_mighty_stark_trekker",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1770646800000,
+      "tag": "0003_sharp_silver_samurai",
+      "breakpoints": true
     }
   ]
 }

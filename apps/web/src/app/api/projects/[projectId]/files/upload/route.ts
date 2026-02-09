@@ -1,8 +1,7 @@
 import { db } from "@/lib/db";
 import { projects, projectFiles } from "@/lib/db/schema";
-import { withAuth } from "@/lib/auth/middleware";
+import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { validateFilePath } from "@/lib/utils/validation";
-import { checkProjectAccess } from "@/lib/db/queries/projects";
 import { broadcastFileEvent } from "@/lib/websocket/server";
 import * as storage from "@/lib/storage";
 import { MIME_TYPES, LIMITS } from "@backslash/shared";
@@ -19,21 +18,23 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
-  return withAuth(request, async (req, user) => {
-    try {
-      const { projectId } = await params;
+  try {
+    const { projectId } = await params;
 
-      const access = await checkProjectAccess(user.id, projectId);
-      if (!access.access || access.role === "viewer") {
-        return NextResponse.json(
-          { error: "Permission denied" },
-          { status: 403 }
-        );
-      }
+    const access = await resolveProjectAccess(request, projectId);
+    if (!access.access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+    if (access.role === "viewer") {
+      return NextResponse.json(
+        { error: "Permission denied" },
+        { status: 403 }
+      );
+    }
 
-      const project = access.project;
+    const project = access.project;
 
-      const formData = await req.formData();
+    const formData = await request.formData();
       const entries = formData.getAll("files") as File[];
       const paths = formData.getAll("paths") as string[];
 
@@ -84,7 +85,8 @@ export async function POST(
         }
       }
 
-      const created = [];
+    const created = [];
+    const actorUserId = access.user?.id ?? project.userId;
 
       for (let i = 0; i < entries.length; i++) {
         const file = entries[i];
@@ -160,23 +162,22 @@ export async function POST(
         created.push(dbFile);
 
         // Broadcast file creation to collaborators
-        broadcastFileEvent({
-          type: "file:created",
-          projectId,
-          userId: user.id,
-          fileId,
-          path: filePath,
-          isDirectory: false,
-        });
+      broadcastFileEvent({
+        type: "file:created",
+        projectId,
+        userId: actorUserId,
+        fileId,
+        path: filePath,
+        isDirectory: false,
+      });
       }
 
       return NextResponse.json({ files: created }, { status: 201 });
-    } catch (error) {
-      console.error("Error uploading files:", error);
-      return NextResponse.json(
-        { error: "Internal server error" },
-        { status: 500 }
-      );
-    }
-  });
+  } catch (error) {
+    console.error("Error uploading files:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
 }

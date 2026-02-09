@@ -99,8 +99,8 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
         }
         attempts++;
         // Retry a few times as pages render incrementally
-        if (attempts < 5) {
-          requestAnimationFrame(tryRestore);
+        if (attempts < 20) {
+          setTimeout(() => requestAnimationFrame(tryRestore), 50);
         }
       };
       requestAnimationFrame(tryRestore);
@@ -186,7 +186,11 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
       const selection = window.getSelection();
       if (!selection || selection.isCollapsed) return;
 
-      const text = selection.toString().trim();
+      const text = selection
+        .toString()
+        .replace(/-\s*\n\s*/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
       if (text.length >= 3) {
         onTextSelect!(text);
       }
@@ -224,9 +228,11 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
 
   function handleDownload() {
     if (pdfUrl) {
-      const downloadUrl = pdfUrl.includes("?")
-        ? `${pdfUrl.split("?")[0]}?download=true`
-        : `${pdfUrl}?download=true`;
+      const [base, query = ""] = pdfUrl.split("?");
+      const params = new URLSearchParams(query);
+      params.set("download", "true");
+      const nextQuery = params.toString();
+      const downloadUrl = nextQuery ? `${base}?${nextQuery}` : `${base}?download=true`;
       window.open(downloadUrl, "_blank");
     }
   }

@@ -42,6 +42,7 @@ interface FileTreeProps {
   activeFileId: string | null;
   onFileSelect: (fileId: string, filePath: string) => void;
   onFilesChanged: () => void;
+  shareToken?: string | null;
 }
 
 // ─── Build tree structure from flat file list ───────
@@ -429,6 +430,7 @@ export function FileTree({
   activeFileId,
   onFileSelect,
   onFilesChanged,
+  shareToken = null,
 }: FileTreeProps) {
   const [creating, setCreating] = useState<"file" | "folder" | null>(null);
   const [newName, setNewName] = useState("");
@@ -444,6 +446,15 @@ export function FileTree({
   const dragCounter = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const withShareToken = useCallback(
+    (url: string) => {
+      if (!shareToken) return url;
+      const separator = url.includes("?") ? "&" : "?";
+      return `${url}${separator}share=${encodeURIComponent(shareToken)}`;
+    },
+    [shareToken]
+  );
+
   useEffect(() => {
     if (creating && inputRef.current) {
       inputRef.current.focus();
@@ -458,7 +469,7 @@ export function FileTree({
     async (fileId: string, newPath: string) => {
       try {
         const res = await fetch(
-          `/api/projects/${projectId}/files/${fileId}`,
+          withShareToken(`/api/projects/${projectId}/files/${fileId}`),
           {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -472,7 +483,7 @@ export function FileTree({
         // Silently fail
       }
     },
-    [projectId, onFilesChanged]
+    [onFilesChanged, projectId, withShareToken]
   );
 
   // ─── Internal drag-and-drop (move files between folders) ──
@@ -523,7 +534,7 @@ export function FileTree({
         }
 
         const res = await fetch(
-          `/api/projects/${projectId}/files/upload`,
+          withShareToken(`/api/projects/${projectId}/files/upload`),
           {
             method: "POST",
             body: formData,
@@ -539,7 +550,7 @@ export function FileTree({
         setUploading(false);
       }
     },
-    [projectId, onFilesChanged]
+    [onFilesChanged, projectId, withShareToken]
   );
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -626,7 +637,7 @@ export function FileTree({
       if (!newName.trim() || !creating) return;
 
       try {
-        const res = await fetch(`/api/projects/${projectId}/files`, {
+        const res = await fetch(withShareToken(`/api/projects/${projectId}/files`), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -646,7 +657,7 @@ export function FileTree({
         setNewName("");
       }
     },
-    [creating, newName, projectId, onFilesChanged]
+    [creating, newName, onFilesChanged, projectId, withShareToken]
   );
 
   // ─── Delete file ─────────────────────────────────
@@ -660,7 +671,7 @@ export function FileTree({
 
       try {
         const res = await fetch(
-          `/api/projects/${projectId}/files/${fileId}`,
+          withShareToken(`/api/projects/${projectId}/files/${fileId}`),
           { method: "DELETE" }
         );
 
@@ -671,7 +682,7 @@ export function FileTree({
         // Silently fail
       }
     },
-    [projectId, onFilesChanged]
+    [onFilesChanged, projectId, withShareToken]
   );
 
   // ─── Context menu handlers ───────────────────────

@@ -1,11 +1,17 @@
 import { db } from "@/lib/db";
-import { projects, projectFiles, builds } from "@/lib/db/schema";
+import {
+  projects,
+  projectFiles,
+  builds,
+  projectShares,
+  projectPublicShares,
+} from "@/lib/db/schema";
 import { withAuth, AuthenticatedUser } from "@/lib/auth/middleware";
 import { createProjectSchema } from "@/lib/utils/validation";
 import { findSharedProjectsByUser } from "@/lib/db/queries/projects";
 import * as storage from "@/lib/storage";
 import { MIME_TYPES } from "@backslash/shared";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, and, desc, or, isNull, gt } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { v4 as uuidv4 } from "uuid";
@@ -29,12 +35,42 @@ export async function GET(request: NextRequest) {
             .select({ status: builds.status })
             .from(builds)
             .where(eq(builds.projectId, project.id))
-            .orderBy(desc(builds.createdAt))
+            .orderBy(desc(builds.createdAt), desc(builds.id))
+            .limit(1);
+
+          const activeShares = await db
+            .select({ id: projectShares.id })
+            .from(projectShares)
+            .where(
+              and(
+                eq(projectShares.projectId, project.id),
+                or(
+                  isNull(projectShares.expiresAt),
+                  gt(projectShares.expiresAt, new Date())
+                )
+              )
+            );
+
+          const [publicShare] = await db
+            .select({ id: projectPublicShares.id })
+            .from(projectPublicShares)
+            .where(
+              and(
+                eq(projectPublicShares.projectId, project.id),
+                or(
+                  isNull(projectPublicShares.expiresAt),
+                  gt(projectPublicShares.expiresAt, new Date())
+                )
+              )
+            )
             .limit(1);
 
           return {
             ...project,
             lastBuildStatus: lastBuild?.status ?? null,
+            sharedWithCount: activeShares.length,
+            anyoneShared: Boolean(publicShare),
+            isShared: activeShares.length > 0 || Boolean(publicShare),
           };
         })
       );
@@ -47,7 +83,7 @@ export async function GET(request: NextRequest) {
             .select({ status: builds.status })
             .from(builds)
             .where(eq(builds.projectId, sp.id))
-            .orderBy(desc(builds.createdAt))
+            .orderBy(desc(builds.createdAt), desc(builds.id))
             .limit(1);
 
           return {
@@ -60,6 +96,10 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({
         projects: projectsWithBuildStatus,
         sharedProjects: sharedWithBuildStatus,
+      }, {
+        headers: {
+          "Cache-Control": "no-store",
+        },
       });
     } catch (error) {
       console.error("Error listing projects:", error);

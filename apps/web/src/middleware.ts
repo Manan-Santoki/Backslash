@@ -19,7 +19,9 @@ export function middleware(request: NextRequest) {
   const sessionToken = request.cookies.get("session")?.value;
 
   // Redirect unauthenticated users to login for protected routes
-  if (!sessionToken && !PUBLIC_PATHS.has(pathname)) {
+  const isPublicSharePath = pathname.startsWith("/share/");
+
+  if (!sessionToken && !PUBLIC_PATHS.has(pathname) && !isPublicSharePath) {
     const loginUrl = new URL("/login", request.url);
     loginUrl.searchParams.set("redirect", pathname);
     return NextResponse.redirect(loginUrl);

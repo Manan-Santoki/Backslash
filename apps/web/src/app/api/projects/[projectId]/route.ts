@@ -1,6 +1,7 @@
 import { db } from "@/lib/db";
 import { projects, projectFiles, builds } from "@/lib/db/schema";
 import { withAuth } from "@/lib/auth/middleware";
+import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { updateProjectSchema } from "@/lib/utils/validation";
 import { checkProjectAccess } from "@/lib/db/queries/projects";
 import * as storage from "@/lib/storage";
@@ -15,46 +16,43 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
-  return withAuth(request, async (_req, user) => {
-    try {
-      const { projectId } = await params;
+  try {
+    const { projectId } = await params;
 
-      const access = await checkProjectAccess(user.id, projectId);
-      if (!access.access) {
-        return NextResponse.json(
-          { error: "Project not found" },
-          { status: 404 }
-        );
-      }
-
-      const project = access.project;
-
-      const files = await db
-        .select()
-        .from(projectFiles)
-        .where(eq(projectFiles.projectId, projectId));
-
-      const [lastBuild] = await db
-        .select()
-        .from(builds)
-        .where(eq(builds.projectId, projectId))
-        .orderBy(desc(builds.createdAt))
-        .limit(1);
-
-      return NextResponse.json({
-        project,
-        files,
-        lastBuild: lastBuild ?? null,
-        role: access.role,
-      });
-    } catch (error) {
-      console.error("Error fetching project:", error);
-      return NextResponse.json(
-        { error: "Internal server error" },
-        { status: 500 }
-      );
+    const access = await resolveProjectAccess(request, projectId);
+    if (!access.access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
     }
-  });
+
+    const project = access.project;
+
+    const files = await db
+      .select()
+      .from(projectFiles)
+      .where(eq(projectFiles.projectId, projectId));
+
+    const [lastBuild] = await db
+      .select()
+      .from(builds)
+      .where(eq(builds.projectId, projectId))
+      .orderBy(desc(builds.createdAt))
+      .limit(1);
+
+    return NextResponse.json({
+      project,
+      files,
+      lastBuild: lastBuild ?? null,
+      role: access.role,
+      shareToken: access.shareToken,
+      isAnonymous: access.isAnonymous,
+    });
+  } catch (error) {
+    console.error("Error fetching project:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
 }
 
 // ─── PUT /api/projects/[projectId] ─────────────────
