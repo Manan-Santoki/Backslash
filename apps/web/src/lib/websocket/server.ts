@@ -43,6 +43,7 @@ export interface BuildStatusPayload {
   projectId: string;
   buildId: string;
   status: "queued" | "compiling";
+  triggeredByUserId?: string | null;
 }
 
 /**
@@ -56,6 +57,7 @@ export interface BuildCompletePayload {
   logs: string;
   durationMs: number;
   errors: ParsedLogEntry[];
+  triggeredByUserId?: string | null;
 }
 
 export type BuildUpdatePayload = BuildStatusPayload | BuildCompletePayload;

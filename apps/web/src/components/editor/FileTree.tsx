@@ -42,6 +42,8 @@ interface FileTreeProps {
   activeFileId: string | null;
   onFileSelect: (fileId: string, filePath: string) => void;
   onFilesChanged: () => void;
+  shareToken?: string | null;
+  readOnly?: boolean;
 }
 
 // ─── Build tree structure from flat file list ───────
@@ -429,6 +431,8 @@ export function FileTree({
   activeFileId,
   onFileSelect,
   onFilesChanged,
+  shareToken = null,
+  readOnly = false,
 }: FileTreeProps) {
   const [creating, setCreating] = useState<"file" | "folder" | null>(null);
   const [newName, setNewName] = useState("");
@@ -444,6 +448,15 @@ export function FileTree({
   const dragCounter = useRef(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const withShareToken = useCallback(
+    (url: string) => {
+      if (!shareToken) return url;
+      const separator = url.includes("?") ? "&" : "?";
+      return `${url}${separator}share=${encodeURIComponent(shareToken)}`;
+    },
+    [shareToken]
+  );
+
   useEffect(() => {
     if (creating && inputRef.current) {
       inputRef.current.focus();
@@ -458,7 +471,7 @@ export function FileTree({
     async (fileId: string, newPath: string) => {
       try {
         const res = await fetch(
-          `/api/projects/${projectId}/files/${fileId}`,
+          withShareToken(`/api/projects/${projectId}/files/${fileId}`),
           {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
@@ -472,7 +485,7 @@ export function FileTree({
         // Silently fail
       }
     },
-    [projectId, onFilesChanged]
+    [onFilesChanged, projectId, withShareToken]
   );
 
   // ─── Internal drag-and-drop (move files between folders) ──
@@ -523,7 +536,7 @@ export function FileTree({
         }
 
         const res = await fetch(
-          `/api/projects/${projectId}/files/upload`,
+          withShareToken(`/api/projects/${projectId}/files/upload`),
           {
             method: "POST",
             body: formData,
@@ -539,7 +552,7 @@ export function FileTree({
         setUploading(false);
       }
     },
-    [projectId, onFilesChanged]
+    [onFilesChanged, projectId, withShareToken]
   );
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
@@ -626,7 +639,7 @@ export function FileTree({
       if (!newName.trim() || !creating) return;
 
       try {
-        const res = await fetch(`/api/projects/${projectId}/files`, {
+        const res = await fetch(withShareToken(`/api/projects/${projectId}/files`), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -646,7 +659,7 @@ export function FileTree({
         setNewName("");
       }
     },
-    [creating, newName, projectId, onFilesChanged]
+    [creating, newName, onFilesChanged, projectId, withShareToken]
   );
 
   // ─── Delete file ─────────────────────────────────
@@ -660,7 +673,7 @@ export function FileTree({
 
       try {
         const res = await fetch(
-          `/api/projects/${projectId}/files/${fileId}`,
+          withShareToken(`/api/projects/${projectId}/files/${fileId}`),
           { method: "DELETE" }
         );
 
@@ -671,7 +684,7 @@ export function FileTree({
         // Silently fail
       }
     },
-    [projectId, onFilesChanged]
+    [onFilesChanged, projectId, withShareToken]
   );
 
   // ─── Context menu handlers ───────────────────────
@@ -704,30 +717,32 @@ export function FileTree({
         <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">
           Files
         </span>
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={() => {
-              setCreating("file");
-              setNewName("");
-            }}
-            title="New File"
-            className="rounded p-1 text-text-muted transition-colors hover:text-text-primary hover:bg-bg-elevated"
-          >
-            <FilePlus className="h-4 w-4" />
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setCreating("folder");
-              setNewName("");
-            }}
-            title="New Folder"
-            className="rounded p-1 text-text-muted transition-colors hover:text-text-primary hover:bg-bg-elevated"
-          >
-            <FolderPlus className="h-4 w-4" />
-          </button>
-        </div>
+        {!readOnly && (
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => {
+                setCreating("file");
+                setNewName("");
+              }}
+              title="New File"
+              className="rounded p-1 text-text-muted transition-colors hover:text-text-primary hover:bg-bg-elevated"
+            >
+              <FilePlus className="h-4 w-4" />
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setCreating("folder");
+                setNewName("");
+              }}
+              title="New Folder"
+              className="rounded p-1 text-text-muted transition-colors hover:text-text-primary hover:bg-bg-elevated"
+            >
+              <FolderPlus className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* New file/folder input */}
@@ -813,8 +828,8 @@ export function FileTree({
         ))}
       </div>
 
-      {/* Context menu */}
-      {contextMenu && (
+      {/* Context menu (hidden for viewers) */}
+      {!readOnly && contextMenu && (
         <ContextMenu
           x={contextMenu.x}
           y={contextMenu.y}

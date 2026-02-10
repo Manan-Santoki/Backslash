@@ -2,7 +2,7 @@ import { db } from "@/lib/db";
 import { projectShares } from "@/lib/db/schema";
 import { withAuth } from "@/lib/auth/middleware";
 import { checkProjectAccess } from "@/lib/db/queries/projects";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
@@ -44,7 +44,12 @@ export async function PUT(
       const [updated] = await db
         .update(projectShares)
         .set({ role: parsed.data.role })
-        .where(eq(projectShares.id, shareId))
+        .where(
+          and(
+            eq(projectShares.id, shareId),
+            eq(projectShares.projectId, projectId)
+          )
+        )
         .returning();
 
       if (!updated) {

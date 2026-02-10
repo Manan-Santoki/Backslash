@@ -39,6 +39,7 @@ COPY --from=builder /app/apps/web/public ./apps/web/public
 COPY --from=builder /app/templates ./templates
 COPY --from=builder /app/apps/web/drizzle ./apps/web/drizzle
 COPY --from=builder /app/apps/web/scripts ./apps/web/scripts
+COPY --from=builder /app/apps/web/docker-entrypoint.sh ./apps/web/docker-entrypoint.sh
 
 # Install migration dependencies (postgres, drizzle-orm) in an isolated
 # directory. Next.js standalone bundles these into webpack chunks so they
@@ -46,8 +47,10 @@ COPY --from=builder /app/apps/web/scripts ./apps/web/scripts
 RUN npm install --prefix /migrate-deps postgres drizzle-orm 2>/dev/null
 
 # Create data directory
-RUN mkdir -p /data/projects /data/templates
+RUN sed -i 's/\r$//' /app/apps/web/docker-entrypoint.sh \
+  && mkdir -p /data/projects /data/templates \
+  && chmod +x /app/apps/web/docker-entrypoint.sh
 
 EXPOSE 3000
 
-CMD ["node", "apps/web/server.js"]
+CMD ["/app/apps/web/docker-entrypoint.sh"]

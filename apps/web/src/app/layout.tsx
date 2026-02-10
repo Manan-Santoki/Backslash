@@ -5,6 +5,14 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Backslash",
   description: "Open-source LaTeX editor with live PDF preview",
+  icons: {
+    icon: "/icon.svg",
+  },
+  openGraph: {
+    title: "Backslash",
+    description: "Open-source LaTeX editor with live PDF preview",
+    type: "website",
+  },
 };
 
 export default function RootLayout({

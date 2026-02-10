@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#1e1e2e"/>
+  <text x="600" y="340" text-anchor="middle" font-family="'Georgia', serif" font-size="280" font-weight="700" fill="#cdd6f4">\</text>
+  <text x="600" y="520" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="48" font-weight="600" fill="#a6adc8">Backslash</text>
+  <text x="600" y="570" text-anchor="middle" font-family="system-ui, -apple-system, sans-serif" font-size="28" fill="#6c7086">Open-source LaTeX editor</text>
+</svg>

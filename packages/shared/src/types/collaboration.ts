@@ -1,3 +1,5 @@
+import type { BuildStatus } from "./project";
+
 // ─── Share Roles ────────────────────────────────────
 
 export type ShareRole = "viewer" | "editor";
@@ -11,6 +13,13 @@ export interface Collaborator {
   name: string;
   role: ShareRole;
   createdAt: string;
+  expiresAt?: string | null;
+}
+
+export interface PublicShareSettings {
+  enabled: boolean;
+  role: ShareRole;
+  expiresAt: string | null;
 }
 
 // ─── Presence ───────────────────────────────────────
@@ -38,12 +47,24 @@ export interface CursorSelection {
 
 // ─── Chat ───────────────────────────────────────────
 
+export type ChatMessageKind = "user" | "system" | "build";
+
+export interface ChatBuildMetadata {
+  buildId: string;
+  status: BuildStatus;
+  durationMs?: number | null;
+  actorUserId?: string | null;
+  actorName?: string | null;
+}
+
 export interface ChatMessage {
   id: string;
   userId: string;
   userName: string;
   text: string;
   timestamp: number;
+  kind?: ChatMessageKind;
+  build?: ChatBuildMetadata;
 }
 
 // ─── Share API ──────────────────────────────────────

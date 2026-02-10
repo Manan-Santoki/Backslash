@@ -36,7 +36,12 @@ export interface UpdateProjectRequest {
 }
 
 export interface ProjectListResponse {
-  projects: (Project & { lastBuildStatus: Build["status"] | null })[];
+  projects: (Project & {
+    lastBuildStatus: Build["status"] | null;
+    sharedWithCount?: number;
+    anyoneShared?: boolean;
+    isShared?: boolean;
+  })[];
 }
 
 export interface ProjectDetailResponse {

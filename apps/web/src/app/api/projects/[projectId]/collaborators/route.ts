@@ -13,7 +13,15 @@ import { z } from "zod";
 const shareSchema = z.object({
   email: z.string().email("Invalid email address"),
   role: z.enum(["viewer", "editor"]),
+  expiresIn: z.enum(["30m", "7d", "never"]).default("never"),
 });
+
+function resolveExpiry(expiresIn: "30m" | "7d" | "never"): Date | null {
+  if (expiresIn === "never") return null;
+  const now = Date.now();
+  if (expiresIn === "30m") return new Date(now + 30 * 60 * 1000);
+  return new Date(now + 7 * 24 * 60 * 60 * 1000);
+}
 
 // ─── GET /api/projects/[projectId]/collaborators ───
 // List all collaborators on a project. Owner and shared users can view.
@@ -55,6 +63,7 @@ export async function GET(
           name: c.name,
           role: c.role,
           createdAt: c.createdAt,
+          expiresAt: c.expiresAt,
         })),
       });
     } catch (error) {
@@ -98,7 +107,8 @@ export async function POST(
         );
       }
 
-      const { email, role } = parsed.data;
+      const { email, role, expiresIn } = parsed.data;
+      const expiresAt = resolveExpiry(expiresIn);
 
       // Can't share with yourself
       if (email.toLowerCase() === user.email.toLowerCase()) {
@@ -133,7 +143,7 @@ export async function POST(
         // Update role if already shared
         const [updated] = await db
           .update(projectShares)
-          .set({ role })
+          .set({ role, expiresAt })
           .where(eq(projectShares.id, existing.id))
           .returning();
 
@@ -145,6 +155,7 @@ export async function POST(
             name: targetUser.name,
             role: updated.role,
             createdAt: updated.createdAt,
+            expiresAt: updated.expiresAt,
           },
           updated: true,
         });
@@ -157,6 +168,7 @@ export async function POST(
           projectId,
           userId: targetUser.id,
           role,
+          expiresAt,
           invitedBy: user.id,
         })
         .returning();
@@ -170,6 +182,7 @@ export async function POST(
             name: targetUser.name,
             role: share.role,
             createdAt: share.createdAt,
+            expiresAt: share.expiresAt,
           },
           updated: false,
         },

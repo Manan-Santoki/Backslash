@@ -3,6 +3,9 @@ import { eq, inArray } from "drizzle-orm";
 import { LIMITS } from "@backslash/shared";
 import type { Engine } from "@backslash/shared";
 
+import fs from "fs/promises";
+import path from "path";
+
 import { db } from "@/lib/db";
 import { builds } from "@/lib/db/schema";
 import { getProjectDir, getPdfPath, fileExists } from "@/lib/storage";
@@ -10,12 +13,19 @@ import { runCompileContainer } from "./docker";
 import { parseLatexLog } from "./logParser";
 import { broadcastBuildUpdate } from "@/lib/websocket/server";
 
+const STORAGE_PATH = process.env.STORAGE_PATH || "/data";
+
 // ─── Types ───────────────────────────────────────────
 
 export interface CompileJobData {
   buildId: string;
   projectId: string;
+  /** Legacy field retained for backward compatibility with queued jobs */
   userId: string;
+  /** Owner storage root. Project files are read/written from this user scope. */
+  storageUserId?: string;
+  /** Actual user who triggered this build (for attribution and direct notifications). */
+  triggeredByUserId?: string;
   engine: Engine;
   mainFile: string;
 }
@@ -133,31 +143,51 @@ class CompileRunner {
 
   private async processJob(data: CompileJobData): Promise<void> {
     const { buildId, projectId, userId, engine, mainFile } = data;
+    const storageUserId = data.storageUserId ?? userId;
+    const actorUserId = data.triggeredByUserId ?? userId;
     const startTime = Date.now();
+
+    // Isolated build directory to prevent race conditions between concurrent builds
+    const buildDir = path.join(STORAGE_PATH, "builds", buildId);
 
     try {
       // Step 1: Mark as compiling
       await updateBuildStatus(buildId, "compiling");
 
-      broadcastBuildUpdate(userId, {
+      broadcastBuildUpdate(actorUserId, {
         projectId,
         buildId,
         status: "compiling",
+        triggeredByUserId: actorUserId,
       });
 
-      // Step 2: Resolve project directory
-      const projectDir = getProjectDir(userId, projectId);
+      // Step 2: Copy project files to isolated build directory
+      const projectDir = getProjectDir(storageUserId, projectId);
+      await copyDir(projectDir, buildDir);
+      console.log(`[Runner] Copied project files to build dir: ${buildDir}`);
 
-      // Step 3: Run the Docker container
+      // Step 3: Run the Docker container against the isolated build dir
       const containerResult = await runCompileContainer({
-        projectDir,
+        projectDir: buildDir,
         mainFile,
       });
 
       console.log(`[Runner] Container finished for job ${buildId}, processing results...`);
 
       const durationMs = Date.now() - startTime;
-      const pdfOutputPath = getPdfPath(userId, projectId, mainFile);
+
+      // Check for PDF in the build directory
+      const pdfName = mainFile.replace(/\.tex$/, ".pdf");
+      const buildPdfPath = path.join(buildDir, pdfName);
+      const pdfInBuild = await fileExists(buildPdfPath);
+
+      // Copy PDF back to project directory if it was generated
+      const pdfOutputPath = getPdfPath(storageUserId, projectId, mainFile);
+      if (pdfInBuild) {
+        await fs.mkdir(path.dirname(pdfOutputPath), { recursive: true });
+        await fs.copyFile(buildPdfPath, pdfOutputPath);
+      }
+
       const pdfExists = await fileExists(pdfOutputPath);
       const parsedEntries = parseLatexLog(containerResult.logs);
       const hasErrors = parsedEntries.some((e) => e.type === "error");
@@ -186,7 +216,7 @@ class CompileRunner {
         .where(eq(builds.id, buildId));
 
       // Step 5: Broadcast completion
-      broadcastBuildUpdate(userId, {
+      broadcastBuildUpdate(actorUserId, {
         projectId,
         buildId,
         status: finalStatus,
@@ -194,6 +224,7 @@ class CompileRunner {
         logs: containerResult.logs,
         durationMs,
         errors: parsedEntries.filter((e) => e.type === "error"),
+        triggeredByUserId: actorUserId,
       });
 
       this.totalProcessed++;
@@ -206,7 +237,7 @@ class CompileRunner {
       await updateBuildError(buildId, errorMessage, durationMs);
 
       // Broadcast the error
-      broadcastBuildUpdate(userId, {
+      broadcastBuildUpdate(actorUserId, {
         projectId,
         buildId,
         status: "error",
@@ -221,10 +252,18 @@ class CompileRunner {
             message: `Compilation infrastructure error: ${errorMessage}`,
           },
         ],
+        triggeredByUserId: actorUserId,
       });
 
       this.totalErrors++;
       console.error(`[Runner] Job ${buildId} failed: ${errorMessage}`);
+    } finally {
+      // Always clean up the isolated build directory
+      try {
+        await fs.rm(buildDir, { recursive: true, force: true });
+      } catch {
+        // Ignore cleanup errors
+      }
     }
   }
 
@@ -266,6 +305,22 @@ class CompileRunner {
     }
 
     console.log("[Runner] Compile runner stopped");
+  }
+}
+
+// ─── File Helpers ───────────────────────────────────
+
+async function copyDir(src: string, dest: string): Promise<void> {
+  await fs.mkdir(dest, { recursive: true });
+  const entries = await fs.readdir(src, { withFileTypes: true });
+  for (const entry of entries) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      await copyDir(srcPath, destPath);
+    } else {
+      await fs.copyFile(srcPath, destPath);
+    }
   }
 }
 

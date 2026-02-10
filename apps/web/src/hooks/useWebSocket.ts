@@ -21,15 +21,27 @@ interface BuildCompleteData {
   logs: string;
   durationMs: number;
   errors: ParsedLogEntry[];
+  triggeredByUserId?: string | null;
 }
 
 interface BuildStatusData {
   projectId: string;
   buildId: string;
   status: "queued" | "compiling";
+  triggeredByUserId?: string | null;
+}
+
+interface SelfIdentity {
+  userId: string;
+  name: string;
+  email: string;
+  color: string;
 }
 
 interface UseWebSocketOptions {
+  shareToken?: string | null;
+  // Identity event (server tells client its assigned identity)
+  onSelfIdentity?: (identity: SelfIdentity) => void;
   // Build events
   onBuildStatus?: (data: BuildStatusData) => void;
   onBuildComplete?: (data: BuildCompleteData) => void;
@@ -46,6 +58,18 @@ interface UseWebSocketOptions {
   // Chat events
   onChatMessage?: (message: ChatMessage) => void;
   onChatHistory?: (messages: ChatMessage[]) => void;
+  onChatRead?: (data: {
+    userId: string;
+    lastReadMessageId: string;
+    timestamp: number;
+  }) => void;
+  onChatReadState?: (
+    reads: Array<{
+      userId: string;
+      lastReadMessageId: string;
+      timestamp: number;
+    }>
+  ) => void;
   // File events
   onFileCreated?: (data: { userId: string; file: { id: string; path: string; isDirectory: boolean } }) => void;
   onFileDeleted?: (data: { userId: string; fileId: string; path: string }) => void;
@@ -149,6 +173,11 @@ export function useWebSocket(
     socketRef.current?.emit("chat:send", { text });
   }, []);
 
+  const sendChatRead = useCallback((lastReadMessageId: string) => {
+    if (!lastReadMessageId) return;
+    socketRef.current?.emit("chat:read", { lastReadMessageId });
+  }, []);
+
   const leaveProject = useCallback((projId: string) => {
     socketRef.current?.emit("leave:project", { projectId: projId });
   }, []);
@@ -167,11 +196,19 @@ export function useWebSocket(
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
+      auth: optionsRef.current.shareToken
+        ? { shareToken: optionsRef.current.shareToken }
+        : undefined,
     });
 
     socket.on("connect", () => {
       console.log("[WS] Connected to WebSocket server");
       socket.emit("join:project", { projectId });
+    });
+
+    // Identity event — server tells us our assigned userId/name
+    socket.on("self:identity", (data: SelfIdentity) => {
+      optionsRef.current.onSelfIdentity?.(data);
     });
 
     // Build events
@@ -232,6 +269,30 @@ export function useWebSocket(
       optionsRef.current.onChatHistory?.(data.messages);
     });
 
+    socket.on(
+      "chat:read",
+      (data: {
+        userId: string;
+        lastReadMessageId: string;
+        timestamp: number;
+      }) => {
+        optionsRef.current.onChatRead?.(data);
+      }
+    );
+
+    socket.on(
+      "chat:readState",
+      (data: {
+        reads: Array<{
+          userId: string;
+          lastReadMessageId: string;
+          timestamp: number;
+        }>;
+      }) => {
+        optionsRef.current.onChatReadState?.(data.reads);
+      }
+    );
+
     // File events
     socket.on(
       "file:created",
@@ -263,7 +324,7 @@ export function useWebSocket(
     return () => {
       socket.disconnect();
     };
-  }, [projectId]);
+  }, [projectId, options.shareToken]);
 
   return {
     socket: socketRef,
@@ -272,6 +333,7 @@ export function useWebSocket(
     sendCursorMove,
     sendDocChange,
     sendChatMessage,
+    sendChatRead,
     leaveProject,
   };
 }

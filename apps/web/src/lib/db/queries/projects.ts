@@ -1,6 +1,13 @@
 import { db } from "@/lib/db";
-import { projects, projectFiles, builds, projectShares, users } from "@/lib/db/schema";
-import { eq, and, desc, or } from "drizzle-orm";
+import {
+  projects,
+  projectFiles,
+  builds,
+  projectShares,
+  projectPublicShares,
+  users,
+} from "@/lib/db/schema";
+import { eq, and, desc, or, isNull, gt } from "drizzle-orm";
 
 export async function findProjectsByUser(userId: string) {
   return db
@@ -52,7 +59,8 @@ export async function findShareByUserAndProject(
     .where(
       and(
         eq(projectShares.projectId, projectId),
-        eq(projectShares.userId, userId)
+        eq(projectShares.userId, userId),
+        or(isNull(projectShares.expiresAt), gt(projectShares.expiresAt, new Date()))
       )
     )
     .limit(1);
@@ -82,6 +90,24 @@ export async function checkProjectAccess(
     return { access: true, role: share.role, project };
   }
 
+  const [publicShare] = await db
+    .select()
+    .from(projectPublicShares)
+    .where(
+      and(
+        eq(projectPublicShares.projectId, projectId),
+        or(
+          isNull(projectPublicShares.expiresAt),
+          gt(projectPublicShares.expiresAt, new Date())
+        )
+      )
+    )
+    .limit(1);
+
+  if (publicShare) {
+    return { access: true, role: publicShare.role, project };
+  }
+
   return { access: false };
 }
 
@@ -97,10 +123,16 @@ export async function findProjectCollaborators(projectId: string) {
       name: users.name,
       role: projectShares.role,
       createdAt: projectShares.createdAt,
+      expiresAt: projectShares.expiresAt,
     })
     .from(projectShares)
     .innerJoin(users, eq(projectShares.userId, users.id))
-    .where(eq(projectShares.projectId, projectId))
+    .where(
+      and(
+        eq(projectShares.projectId, projectId),
+        or(isNull(projectShares.expiresAt), gt(projectShares.expiresAt, new Date()))
+      )
+    )
     .orderBy(projectShares.createdAt);
 }
 
@@ -125,6 +157,11 @@ export async function findSharedProjectsByUser(userId: string) {
     .from(projectShares)
     .innerJoin(projects, eq(projectShares.projectId, projects.id))
     .innerJoin(users, eq(projects.userId, users.id))
-    .where(eq(projectShares.userId, userId))
+    .where(
+      and(
+        eq(projectShares.userId, userId),
+        or(isNull(projectShares.expiresAt), gt(projectShares.expiresAt, new Date()))
+      )
+    )
     .orderBy(desc(projects.updatedAt));
 }

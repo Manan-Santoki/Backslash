@@ -18,10 +18,16 @@ interface BuildError {
   message: string;
 }
 
+interface CodeSelection {
+  anchor: number;
+  head: number;
+}
+
 interface CodeEditorProps {
   content: string;
   onChange: (value: string) => void;
   language?: string;
+  readOnly?: boolean;
   errors?: BuildError[];
   // Collaboration
   onDocChange?: (changes: DocChange[]) => void;
@@ -35,6 +41,8 @@ export interface CodeEditorHandle {
   scrollToLine: (line: number) => void;
   getScrollPosition: () => number;
   setScrollPosition: (pos: number) => void;
+  getSelection: () => CodeSelection | null;
+  setSelection: (selection: CodeSelection) => void;
 }
 
 // ─── CodeEditor ─────────────────────────────────────
@@ -45,6 +53,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
       content,
       onChange,
       language = "latex",
+      readOnly = false,
       errors,
       onDocChange,
       onCursorChange,
@@ -62,6 +71,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
     const onDocChangeRef = useRef(onDocChange);
     const onCursorChangeRef = useRef(onCursorChange);
     const isExternalUpdate = useRef(false);
+    const cursorEmitRafRef = useRef<number | null>(null);
+    const lastCursorEmitKeyRef = useRef<string>("");
     // Keep callback refs current
     useEffect(() => {
       onChangeRef.current = onChange;
@@ -81,56 +92,90 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
       () => ({
         highlightText: (text: string) => {
           const view = viewRef.current;
-          if (!view || !text || text.length < 3) return;
+          if (!view || !text) return;
+
+          const query = text.replace(/\s+/g, " ").trim();
+          if (query.length < 2) return;
 
           const doc = view.state.doc.toString();
+          const cursorPos = view.state.selection.main.head;
+
+          function normalizeWithMap(source: string) {
+            const map: number[] = [];
+            let normalized = "";
+            let inWhitespace = false;
+            for (let i = 0; i < source.length; i++) {
+              if (/\s/.test(source[i])) {
+                if (!inWhitespace) {
+                  normalized += " ";
+                  map.push(i);
+                  inWhitespace = true;
+                }
+              } else {
+                normalized += source[i];
+                map.push(i);
+                inWhitespace = false;
+              }
+            }
+            return { normalized, map };
+          }
+
+          function normalizedRangeToOriginal(
+            map: number[],
+            fromNorm: number,
+            toNormExclusive: number,
+            docLength: number
+          ) {
+            const from = map[fromNorm] ?? 0;
+            const normEnd = toNormExclusive - 1;
+            const to =
+              normEnd >= 0 && normEnd < map.length ? map[normEnd] + 1 : docLength;
+            return { from, to };
+          }
 
           // Try exact match first
-          const exactIdx = doc.indexOf(text);
+          const exactIdx = doc.indexOf(query);
           if (exactIdx !== -1) {
             view.dispatch({
-              selection: { anchor: exactIdx, head: exactIdx + text.length },
+              selection: { anchor: exactIdx, head: exactIdx + query.length },
               scrollIntoView: true,
             });
             view.focus();
             return;
           }
 
-          // Whitespace-normalized matching: build a map from normalized
-          // positions back to original doc positions so we can select the
-          // correct range even when PDF whitespace differs from source.
-          const normChars: number[] = []; // normChars[i] = original index of normalized char i
-          let inWhitespace = false;
-          for (let i = 0; i < doc.length; i++) {
-            if (/\s/.test(doc[i])) {
-              if (!inWhitespace) {
-                normChars.push(i); // single space representative
-                inWhitespace = true;
-              }
-            } else {
-              normChars.push(i);
-              inWhitespace = false;
-            }
+          // Whitespace-normalized matching with nearest-match selection.
+          const { normalized: docNormalized, map: normMap } = normalizeWithMap(doc);
+          const searchNormalized = query;
+          const fullMatches: number[] = [];
+          let searchIdx = docNormalized.indexOf(searchNormalized);
+          while (searchIdx !== -1) {
+            fullMatches.push(searchIdx);
+            searchIdx = docNormalized.indexOf(searchNormalized, searchIdx + 1);
           }
 
-          const docNormalized = doc.replace(/\s+/g, " ");
-          const searchNormalized = text.replace(/\s+/g, " ").trim();
-          const normIdx = docNormalized.indexOf(searchNormalized);
+          if (fullMatches.length > 0) {
+            let bestFrom = 0;
+            let bestTo = 0;
+            let bestScore = Number.POSITIVE_INFINITY;
 
-          if (normIdx !== -1 && normIdx < normChars.length) {
-            const from = normChars[normIdx];
-            const normEnd = normIdx + searchNormalized.length - 1;
-            // Map the last normalized char back, then include up to the next
-            // original char to capture trailing content
-            let to: number;
-            if (normEnd < normChars.length) {
-              to = normChars[normEnd] + 1;
-            } else {
-              to = doc.length;
+            for (const match of fullMatches) {
+              const { from, to } = normalizedRangeToOriginal(
+                normMap,
+                match,
+                match + searchNormalized.length,
+                doc.length
+              );
+              const score = Math.abs(from - cursorPos);
+              if (score < bestScore) {
+                bestScore = score;
+                bestFrom = from;
+                bestTo = to;
+              }
             }
 
             view.dispatch({
-              selection: { anchor: from, head: to },
+              selection: { anchor: bestFrom, head: bestTo },
               scrollIntoView: true,
             });
             view.focus();
@@ -142,8 +187,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           if (words.length >= 2) {
             const partial = words.slice(0, Math.min(4, words.length)).join(" ");
             const partialIdx = docNormalized.indexOf(partial);
-            if (partialIdx !== -1 && partialIdx < normChars.length) {
-              const from = normChars[partialIdx];
+            if (partialIdx !== -1 && partialIdx < normMap.length) {
+              const from = normMap[partialIdx];
               view.dispatch({
                 selection: { anchor: from, head: from },
                 scrollIntoView: true,
@@ -171,6 +216,24 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           const view = viewRef.current;
           if (!view) return;
           view.scrollDOM.scrollTop = pos;
+        },
+        getSelection: () => {
+          const view = viewRef.current;
+          if (!view) return null;
+          const sel = view.state.selection.main;
+          return { anchor: sel.anchor, head: sel.head };
+        },
+        setSelection: (selection: CodeSelection) => {
+          const view = viewRef.current;
+          if (!view) return;
+          const maxPos = view.state.doc.length;
+          view.dispatch({
+            selection: {
+              anchor: Math.min(Math.max(selection.anchor, 0), maxPos),
+              head: Math.min(Math.max(selection.head, 0), maxPos),
+            },
+            scrollIntoView: true,
+          });
         },
       }),
       []
@@ -209,7 +272,6 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           keymap,
           highlightSpecialChars,
           Decoration,
-          WidgetType,
           ViewPlugin,
           MatchDecorator,
         } = await import("@codemirror/view");
@@ -253,56 +315,6 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           },
         });
         remoteCursorFieldRef.current = remoteCursorField;
-
-        // Widget for remote cursor line
-        class RemoteCursorWidget extends WidgetType {
-          constructor(
-            readonly color: string,
-            readonly name: string
-          ) {
-            super();
-          }
-
-          toDOM() {
-            const wrapper = document.createElement("span");
-            wrapper.style.position = "relative";
-            wrapper.style.display = "inline";
-            wrapper.style.width = "0";
-            wrapper.style.overflow = "visible";
-
-            const cursor = document.createElement("span");
-            cursor.style.borderLeft = `2px solid ${this.color}`;
-            cursor.style.height = "1.2em";
-            cursor.style.position = "absolute";
-            cursor.style.top = "0";
-            cursor.style.left = "0";
-            cursor.style.pointerEvents = "none";
-            cursor.style.zIndex = "10";
-
-            const label = document.createElement("span");
-            label.textContent = this.name;
-            label.style.position = "absolute";
-            label.style.bottom = "100%";
-            label.style.left = "0";
-            label.style.backgroundColor = this.color;
-            label.style.color = "#fff";
-            label.style.fontSize = "10px";
-            label.style.padding = "1px 4px";
-            label.style.borderRadius = "2px";
-            label.style.whiteSpace = "nowrap";
-            label.style.pointerEvents = "none";
-            label.style.zIndex = "11";
-            label.style.lineHeight = "1.2";
-
-            wrapper.appendChild(cursor);
-            wrapper.appendChild(label);
-            return wrapper;
-          }
-
-          eq(other: RemoteCursorWidget) {
-            return this.color === other.color && this.name === other.name;
-          }
-        }
 
         // Plugin that reads the StateField and produces decorations
         const remoteCursorPlugin = ViewPlugin.fromClass(
@@ -349,17 +361,6 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
                 );
                 const headPos = Math.min(headLine.from + selection.head.ch, headLine.to);
 
-                // Cursor widget at the head position
-                const clampedHead = Math.min(Math.max(headPos, 0), docLength);
-                decos.push({
-                  from: clampedHead,
-                  to: clampedHead,
-                  deco: Decoration.widget({
-                    widget: new RemoteCursorWidget(color, name),
-                    side: 1,
-                  }),
-                });
-
                 // Selection highlight if anchor !== head
                 if (anchorPos !== headPos) {
                   const from = Math.min(anchorPos, headPos);
@@ -373,6 +374,30 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
                       deco: Decoration.mark({
                         attributes: {
                           style: `background-color: ${color}33;`,
+                        },
+                      }),
+                    });
+                  }
+                }
+
+                // Draw a lightweight caret marker without injecting widgets into text flow.
+                if (docLength > 0) {
+                  const clampedHead = Math.min(Math.max(headPos, 0), docLength);
+                  const caretFrom = Math.min(Math.max(clampedHead - 1, 0), docLength - 1);
+                  const caretTo = Math.min(caretFrom + 1, docLength);
+                  if (caretFrom < caretTo) {
+                    const caretStyle =
+                      clampedHead === 0
+                        ? `box-shadow: inset 2px 0 0 ${color};`
+                        : `box-shadow: inset -2px 0 0 ${color};`;
+                    decos.push({
+                      from: caretFrom,
+                      to: caretTo,
+                      deco: Decoration.mark({
+                        attributes: {
+                          class: "cm-remote-caret",
+                          "data-remote-user": name,
+                          style: caretStyle,
                         },
                       }),
                     });
@@ -399,7 +424,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
         const setErrorsEffect = StateEffect.define<BuildError[]>();
         errorEffectRef.current = setErrorsEffect;
 
-        const errorLineDeco = Decoration.line({ class: "cm-error-line" });
+        const errorMarkDeco = Decoration.mark({ class: "cm-error-underline" });
 
         const errorField = StateField.define({
           create() {
@@ -413,10 +438,14 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 const decos: any[] = [];
                 const docLines = tr.state.doc.lines;
+                const seenLines = new Set<number>();
                 for (const err of errors) {
-                  if (err.line >= 1 && err.line <= docLines) {
+                  if (err.line >= 1 && err.line <= docLines && !seenLines.has(err.line)) {
+                    seenLines.add(err.line);
                     const lineInfo = tr.state.doc.line(err.line);
-                    decos.push(errorLineDeco.range(lineInfo.from));
+                    const from = lineInfo.from;
+                    const to = Math.max(lineInfo.from, lineInfo.to);
+                    decos.push(errorMarkDeco.range(from, to));
                   }
                 }
                 decos.sort((a: { from: number }, b: { from: number }) => a.from - b.from);
@@ -432,7 +461,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
         });
         errorFieldRef.current = errorField;
 
-        // ─── Clickable URL links ───────────────────────────
+        // ─── Clickable URL links (Ctrl/Cmd + click) ─────────
         const urlRe = /https?:\/\/[^\s)}\]>"'`]+/g;
         const urlDeco = Decoration.mark({
           class: "cm-url-link",
@@ -458,8 +487,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
             decorations: (v) => v.decorations,
             eventHandlers: {
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              mousedown(event: MouseEvent, view: any) {
-                if (!event.ctrlKey && !event.metaKey) return false;
+              click(event: MouseEvent, view: any) {
+                // Require Ctrl (Windows/Linux) or Cmd (Mac)
+                if (!(event.ctrlKey || event.metaKey)) return false;
+                if (event.button !== 0) return false;
                 const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
                 if (pos === null) return false;
                 const line = view.state.doc.lineAt(pos);
@@ -470,7 +501,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
                   const from = line.from + m.index;
                   const to = from + m[0].length;
                   if (pos >= from && pos <= to) {
-                    window.open(m[0], "_blank", "noopener");
+                    window.open(m[0], "_blank", "noopener,noreferrer");
                     event.preventDefault();
                     return true;
                   }
@@ -481,9 +512,15 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           }
         );
 
+        // Read-only mode: disable editing but keep navigation/search
+        const readOnlyExtensions = readOnly
+          ? [EditorView.editable.of(false), EditorState.readOnly.of(true)]
+          : [];
+
         const state = EditorState.create({
           doc: contentRef.current,
           extensions: [
+            ...readOnlyExtensions,
             lineNumbers(),
             highlightActiveLine(),
             highlightSpecialChars(),
@@ -529,12 +566,22 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
 
               // Emit cursor changes
               if (update.selectionSet && !isExternalUpdate.current && onCursorChangeRef.current) {
-                const sel = update.state.selection.main;
-                const anchorLine = update.state.doc.lineAt(sel.anchor);
-                const headLine = update.state.doc.lineAt(sel.head);
-                onCursorChangeRef.current({
-                  anchor: { line: anchorLine.number, ch: sel.anchor - anchorLine.from },
-                  head: { line: headLine.number, ch: sel.head - headLine.from },
+                if (cursorEmitRafRef.current !== null) {
+                  cancelAnimationFrame(cursorEmitRafRef.current);
+                }
+                cursorEmitRafRef.current = requestAnimationFrame(() => {
+                  cursorEmitRafRef.current = null;
+                  const sel = update.state.selection.main;
+                  const anchorLine = update.state.doc.lineAt(sel.anchor);
+                  const headLine = update.state.doc.lineAt(sel.head);
+                  const payload: CursorSelection = {
+                    anchor: { line: anchorLine.number, ch: sel.anchor - anchorLine.from },
+                    head: { line: headLine.number, ch: sel.head - headLine.from },
+                  };
+                  const nextKey = `${payload.anchor.line}:${payload.anchor.ch}-${payload.head.line}:${payload.head.ch}`;
+                  if (nextKey === lastCursorEmitKeyRef.current) return;
+                  lastCursorEmitKeyRef.current = nextKey;
+                  onCursorChangeRef.current?.(payload);
                 });
               }
             }),
@@ -552,12 +599,24 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
         const latestContent = contentRef.current;
         if (view.state.doc.toString() !== latestContent) {
           isExternalUpdate.current = true;
+          const prevSel = view.state.selection.main;
+          const prevScrollTop = view.scrollDOM.scrollTop;
+          const nextMax = latestContent.length;
           view.dispatch({
             changes: {
               from: 0,
               to: view.state.doc.length,
               insert: latestContent,
             },
+            selection: {
+              anchor: Math.min(prevSel.anchor, nextMax),
+              head: Math.min(prevSel.head, nextMax),
+            },
+          });
+          requestAnimationFrame(() => {
+            if (view) {
+              view.scrollDOM.scrollTop = prevScrollTop;
+            }
           });
           isExternalUpdate.current = false;
         }
@@ -566,6 +625,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
       initEditor();
 
       return () => {
+        if (cursorEmitRafRef.current !== null) {
+          cancelAnimationFrame(cursorEmitRafRef.current);
+          cursorEmitRafRef.current = null;
+        }
         if (viewRef.current) {
           viewRef.current.destroy();
           viewRef.current = null;
@@ -582,12 +645,22 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
       const currentContent = view.state.doc.toString();
       if (currentContent !== content) {
         isExternalUpdate.current = true;
+        const prevSel = view.state.selection.main;
+        const prevScrollTop = view.scrollDOM.scrollTop;
+        const nextMax = content.length;
         view.dispatch({
           changes: {
             from: 0,
             to: currentContent.length,
             insert: content,
           },
+          selection: {
+            anchor: Math.min(prevSel.anchor, nextMax),
+            head: Math.min(prevSel.head, nextMax),
+          },
+        });
+        requestAnimationFrame(() => {
+          view.scrollDOM.scrollTop = prevScrollTop;
         });
         isExternalUpdate.current = false;
       }
@@ -641,7 +714,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
     return (
       <div
         ref={containerRef}
-        className="h-full w-full overflow-auto bg-editor-bg"
+        className="h-full w-full overflow-hidden bg-editor-bg"
       />
     );
   }

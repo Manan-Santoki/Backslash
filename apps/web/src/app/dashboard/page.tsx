@@ -22,6 +22,9 @@ interface Project {
   engine: string;
   mainFile: string;
   lastBuildStatus: string | null;
+  sharedWithCount: number;
+  anyoneShared: boolean;
+  isShared: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -406,7 +409,7 @@ export default function DashboardPage() {
 
   const fetchProjects = useCallback(async () => {
     try {
-      const res = await fetch("/api/projects");
+      const res = await fetch("/api/projects", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         setProjects(data.projects);
@@ -421,6 +424,17 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchProjects();
+  }, [fetchProjects]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState !== "visible") {
+        return;
+      }
+      fetchProjects();
+    }, 10_000);
+
+    return () => clearInterval(interval);
   }, [fetchProjects]);
 
   async function handleDelete() {
@@ -524,6 +538,21 @@ export default function DashboardPage() {
                 {/* Engine badge */}
                 <span className="inline-flex items-center rounded-full bg-bg-elevated px-2.5 py-0.5 text-xs font-medium text-text-secondary">
                   {project.engine}
+                </span>
+
+                <span
+                  className={cn(
+                    "inline-flex items-center rounded-full px-2.5 py-0.5 text-[11px] font-medium border",
+                    project.isShared
+                      ? "border-accent/30 bg-accent/10 text-accent"
+                      : "border-border bg-bg-elevated text-text-muted"
+                  )}
+                >
+                  {project.anyoneShared
+                    ? "Shared: Anyone"
+                    : project.sharedWithCount > 0
+                      ? `Shared: ${project.sharedWithCount}`
+                      : "Private"}
                 </span>
 
                 {/* Build status */}

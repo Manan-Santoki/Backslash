@@ -55,6 +55,11 @@ interface EditorHeaderProps {
   role?: "owner" | "viewer" | "editor";
   followingUserId?: string | null;
   onFollowUser?: (userId: string) => void;
+  isSharedProject?: boolean;
+  onShareUpdated?: () => void;
+  shareToken?: string | null;
+  canManageShare?: boolean;
+  canEdit?: boolean;
 }
 
 // ─── Build Status Badge ────────────────────────────
@@ -117,16 +122,27 @@ export function EditorHeader({
   role = "owner",
   followingUserId,
   onFollowUser,
+  isSharedProject = false,
+  onShareUpdated,
+  shareToken = null,
+  canManageShare = role === "owner",
+  canEdit = true,
 }: EditorHeaderProps) {
   const [shareOpen, setShareOpen] = useState(false);
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [sharedProjects, setSharedProjects] = useState<ProjectListItem[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
 
+  function withShareToken(url: string) {
+    if (!shareToken) return url;
+    const separator = url.includes("?") ? "&" : "?";
+    return `${url}${separator}share=${encodeURIComponent(shareToken)}`;
+  }
+
   async function fetchProjects() {
     setLoadingProjects(true);
     try {
-      const res = await fetch("/api/projects");
+      const res = await fetch("/api/projects", { cache: "no-store" });
       if (res.ok) {
         const data = await res.json();
         setProjects(data.projects ?? []);
@@ -139,14 +155,21 @@ export function EditorHeader({
   }
 
   function handleDownloadPdf() {
-    window.open(`/api/projects/${projectId}/pdf?download=true`, "_blank");
+    window.open(withShareToken(`/api/projects/${projectId}/pdf?download=true`), "_blank");
   }
 
   function handleDownloadZip() {
-    window.open(`/api/projects/${projectId}/download`, "_blank");
+    window.open(withShareToken(`/api/projects/${projectId}/download`), "_blank");
   }
 
-  const projectSwitcher = (
+  const projectSwitcher = shareToken ? (
+    <>
+      <div className="h-4 w-px bg-border shrink-0" />
+      <span className="max-w-[220px] truncate text-sm font-medium text-text-primary">
+        {projectName}
+      </span>
+    </>
+  ) : (
     <>
       <div className="h-4 w-px bg-border shrink-0" />
       <DropdownMenu
@@ -233,61 +256,63 @@ export function EditorHeader({
         </div>
       )}
 
-      {/* Compile button */}
-      <TooltipProvider delayDuration={300}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={onCompile}
-              disabled={compiling}
-              className={cn(
-                "flex items-center gap-1.5 rounded-lg px-3 py-1 text-sm font-medium transition-colors",
-                compiling
-                  ? "bg-accent/50 text-bg-primary cursor-not-allowed"
-                  : "bg-accent text-bg-primary hover:bg-accent-hover"
-              )}
-            >
-              {compiling ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Play className="h-3.5 w-3.5" />
-              )}
-              <span className="hidden sm:inline">
-                {compiling ? "Compiling" : "Compile"}
-              </span>
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>Compile project (Ctrl+Enter)</p>
-          </TooltipContent>
-        </Tooltip>
+      {/* Compile button + auto-compile toggle (hidden for viewers) */}
+      {canEdit && (
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onCompile}
+                disabled={compiling}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-lg px-3 py-1 text-sm font-medium transition-colors",
+                  compiling
+                    ? "bg-accent/50 text-bg-primary cursor-not-allowed"
+                    : "bg-accent text-bg-primary hover:bg-accent-hover"
+                )}
+              >
+                {compiling ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Play className="h-3.5 w-3.5" />
+                )}
+                <span className="hidden sm:inline">
+                  {compiling ? "Compiling" : "Compile"}
+                </span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Compile project (Ctrl+Enter)</p>
+            </TooltipContent>
+          </Tooltip>
 
-        {/* Auto-compile toggle */}
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={onAutoCompileToggle}
-              className={cn(
-                "rounded-md p-1.5 transition-colors",
-                autoCompileEnabled
-                  ? "text-accent bg-accent/10 hover:bg-accent/20"
-                  : "text-text-muted hover:text-text-secondary hover:bg-bg-elevated"
-              )}
-            >
-              {autoCompileEnabled ? (
-                <Zap className="h-4 w-4" />
-              ) : (
-                <ZapOff className="h-4 w-4" />
-              )}
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>Auto-compile {autoCompileEnabled ? "on" : "off"}</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+          {/* Auto-compile toggle */}
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={onAutoCompileToggle}
+                className={cn(
+                  "rounded-md p-1.5 transition-colors",
+                  autoCompileEnabled
+                    ? "text-accent bg-accent/10 hover:bg-accent/20"
+                    : "text-text-muted hover:text-text-secondary hover:bg-bg-elevated"
+                )}
+              >
+                {autoCompileEnabled ? (
+                  <Zap className="h-4 w-4" />
+                ) : (
+                  <ZapOff className="h-4 w-4" />
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Auto-compile {autoCompileEnabled ? "on" : "off"}</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
 
       <BuildStatusBadge status={buildStatus} />
 
@@ -301,6 +326,12 @@ export function EditorHeader({
         </span>
       )}
 
+      {isSharedProject && (
+        <span className="inline-flex items-center gap-1 rounded-full border border-accent/30 bg-accent/10 px-2 py-0.5 text-[10px] font-medium text-accent">
+          Shared
+        </span>
+      )}
+
       {/* Presence avatars */}
       <PresenceAvatars
         users={presenceUsers}
@@ -310,23 +341,25 @@ export function EditorHeader({
       />
 
       {/* Share button */}
-      <TooltipProvider delayDuration={300}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              onClick={() => setShareOpen(true)}
-              className="flex items-center gap-1.5 rounded-md border border-border bg-bg-tertiary px-2.5 py-1 text-xs text-text-secondary transition-colors hover:text-accent hover:border-accent/30 hover:bg-accent/5"
-            >
-              <Share2 className="h-3.5 w-3.5" />
-              <span className="hidden md:inline">Share</span>
-            </button>
-          </TooltipTrigger>
-          <TooltipContent>
-            <p>Share project</p>
-          </TooltipContent>
-        </Tooltip>
-      </TooltipProvider>
+      {canManageShare && (
+        <TooltipProvider delayDuration={300}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                type="button"
+                onClick={() => setShareOpen(true)}
+                className="flex items-center gap-1.5 rounded-md border border-border bg-bg-tertiary px-2.5 py-1 text-xs text-text-secondary transition-colors hover:text-accent hover:border-accent/30 hover:bg-accent/5"
+              >
+                <Share2 className="h-3.5 w-3.5" />
+                <span className="hidden md:inline">Share</span>
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Share project</p>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      )}
 
       <div className="h-4 w-px bg-border shrink-0" />
 
@@ -367,13 +400,16 @@ export function EditorHeader({
     </AppHeader>
 
     {/* Share Dialog */}
-    <ShareDialog
-      projectId={projectId}
-      projectName={projectName}
-      open={shareOpen}
-      onClose={() => setShareOpen(false)}
-      isOwner={role === "owner"}
-    />
+    {canManageShare && (
+      <ShareDialog
+        projectId={projectId}
+        projectName={projectName}
+        open={shareOpen}
+        onClose={() => setShareOpen(false)}
+        isOwner={role === "owner"}
+        onChanged={onShareUpdated}
+      />
+    )}
     </>
   );
 }

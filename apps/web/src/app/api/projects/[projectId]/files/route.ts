@@ -1,8 +1,7 @@
 import { db } from "@/lib/db";
 import { projects, projectFiles } from "@/lib/db/schema";
-import { withAuth } from "@/lib/auth/middleware";
+import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { createFileSchema, validateFilePath } from "@/lib/utils/validation";
-import { checkProjectAccess } from "@/lib/db/queries/projects";
 import { broadcastFileEvent } from "@/lib/websocket/server";
 import * as storage from "@/lib/storage";
 import { MIME_TYPES } from "@backslash/shared";
@@ -18,32 +17,27 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
-  return withAuth(request, async (_req, user) => {
-    try {
-      const { projectId } = await params;
+  try {
+    const { projectId } = await params;
 
-      const access = await checkProjectAccess(user.id, projectId);
-      if (!access.access) {
-        return NextResponse.json(
-          { error: "Project not found" },
-          { status: 404 }
-        );
-      }
-
-      const files = await db
-        .select()
-        .from(projectFiles)
-        .where(eq(projectFiles.projectId, projectId));
-
-      return NextResponse.json({ files });
-    } catch (error) {
-      console.error("Error listing files:", error);
-      return NextResponse.json(
-        { error: "Internal server error" },
-        { status: 500 }
-      );
+    const access = await resolveProjectAccess(request, projectId);
+    if (!access.access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
     }
-  });
+
+    const files = await db
+      .select()
+      .from(projectFiles)
+      .where(eq(projectFiles.projectId, projectId));
+
+    return NextResponse.json({ files });
+  } catch (error) {
+    console.error("Error listing files:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
 }
 
 // ─── POST /api/projects/[projectId]/files ──────────
@@ -53,20 +47,22 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
-  return withAuth(request, async (req, user) => {
-    try {
-      const { projectId } = await params;
+  try {
+    const { projectId } = await params;
 
-      const access = await checkProjectAccess(user.id, projectId);
-      if (!access.access || access.role === "viewer") {
-        return NextResponse.json(
-          { error: "Permission denied" },
-          { status: 403 }
-        );
-      }
+    const access = await resolveProjectAccess(request, projectId);
+    if (!access.access) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
+    }
+    if (access.role === "viewer") {
+      return NextResponse.json(
+        { error: "Permission denied" },
+        { status: 403 }
+      );
+    }
 
-      const project = access.project;
-      const body = await req.json();
+    const project = access.project;
+    const body = await request.json();
 
       const parsed = createFileSchema.safeParse(body);
       if (!parsed.success) {
@@ -143,23 +139,22 @@ export async function POST(
         })
         .returning();
 
-      // Broadcast file creation to other collaborators
-      broadcastFileEvent({
-        type: "file:created",
-        projectId,
-        userId: user.id,
-        fileId,
-        path: filePath,
-        isDirectory: isDirectory ?? false,
-      });
+    // Broadcast file creation to other collaborators
+    broadcastFileEvent({
+      type: "file:created",
+      projectId,
+      userId: access.user?.id ?? project.userId,
+      fileId,
+      path: filePath,
+      isDirectory: isDirectory ?? false,
+    });
 
-      return NextResponse.json({ file }, { status: 201 });
-    } catch (error) {
-      console.error("Error creating file:", error);
-      return NextResponse.json(
-        { error: "Internal server error" },
-        { status: 500 }
-      );
-    }
-  });
+    return NextResponse.json({ file }, { status: 201 });
+  } catch (error) {
+    console.error("Error creating file:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 }
+    );
+  }
 }
