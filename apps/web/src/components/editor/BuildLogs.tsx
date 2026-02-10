@@ -7,6 +7,7 @@ import {
   XCircle,
   AlertTriangle,
   Loader2,
+  Ban,
   ChevronUp,
   ChevronDown,
 } from "lucide-react";
@@ -38,6 +39,8 @@ function getStatusIcon(status: string) {
     case "error":
     case "timeout":
       return <XCircle className="h-4 w-4 text-error" />;
+    case "canceled":
+      return <Ban className="h-4 w-4 text-text-muted" />;
     case "compiling":
     case "queued":
       return <Loader2 className="h-4 w-4 animate-spin text-warning" />;
@@ -54,6 +57,8 @@ function getStatusLabel(status: string): string {
       return "Build failed";
     case "timeout":
       return "Build timed out";
+    case "canceled":
+      return "Build canceled";
     case "compiling":
       return "Compiling...";
     case "queued":

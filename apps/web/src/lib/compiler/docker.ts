@@ -43,12 +43,14 @@ const PROJECTS_VOLUME = process.env.PROJECTS_VOLUME || "backslash-project-data";
 export interface CompileContainerOptions {
   projectDir: string;
   mainFile: string;
+  signal?: AbortSignal;
 }
 
 export interface CompileContainerResult {
   exitCode: number;
   logs: string;
   timedOut: boolean;
+  canceled: boolean;
 }
 
 // ─── Helpers ───────────────────────────────────────
@@ -198,7 +200,7 @@ export async function runCompileContainer(
   options: CompileContainerOptions
 ): Promise<CompileContainerResult> {
   const docker = getDockerClient();
-  const { projectDir, mainFile } = options;
+  const { projectDir, mainFile, signal } = options;
 
   console.log(`[Docker] Starting compilation: dir=${projectDir} file=${mainFile}`);
 
@@ -223,8 +225,13 @@ export async function runCompileContainer(
   let logs = "";
   let exitCode = 1;
   let timedOut = false;
+  let canceled = false;
 
   try {
+    if (signal?.aborted) {
+      throw new Error("Build canceled");
+    }
+
     console.log(`[Docker] Creating container with WorkingDir=${projectDir}, cmd=${cmd.join(" ")}`);
     container = await docker.createContainer({
       Image: COMPILER_IMAGE,
@@ -253,6 +260,12 @@ export async function runCompileContainer(
     await container.start();
     console.log(`[Docker] Container started: ${container.id.slice(0, 12)}`);
 
+    const abortPromise = new Promise<"abort">((resolve) => {
+      if (!signal) return;
+      const onAbort = () => resolve("abort");
+      signal.addEventListener("abort", onAbort, { once: true });
+    });
+
     // Enforce timeout via JS setTimeout
     const timeoutPromise = new Promise<"timeout">((resolve) => {
       setTimeout(() => resolve("timeout"), COMPILE_TIMEOUT * 1000);
@@ -266,9 +279,24 @@ export async function runCompileContainer(
     const race = await Promise.race([
       waitPromise,
       timeoutPromise,
+      abortPromise,
     ]);
 
-    if (race === "timeout") {
+    if (race === "abort") {
+      canceled = true;
+      exitCode = -1;
+      console.warn(`[Docker] Container ${container.id.slice(0, 12)} canceled by user`);
+      try {
+        await container.kill();
+      } catch {
+        // Container may have already exited
+      }
+      try {
+        await container.wait();
+      } catch {
+        // Ignore errors if already stopped
+      }
+    } else if (race === "timeout") {
       timedOut = true;
       console.warn(`[Docker] Container ${container.id.slice(0, 12)} timed out after ${COMPILE_TIMEOUT}s`);
       try {
@@ -309,6 +337,7 @@ export async function runCompileContainer(
     exitCode: timedOut ? -1 : exitCode,
     logs,
     timedOut,
+    canceled,
   };
 }
 

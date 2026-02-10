@@ -69,6 +69,8 @@ function buildStatusColor(status: string | null): string {
       return "bg-success";
     case "error":
       return "bg-error";
+    case "canceled":
+      return "bg-text-muted";
     case "compiling":
     case "queued":
       return "bg-warning";
@@ -83,6 +85,8 @@ function buildStatusLabel(status: string | null): string {
       return "Built successfully";
     case "error":
       return "Build failed";
+    case "canceled":
+      return "Build canceled";
     case "compiling":
       return "Compiling";
     case "queued":

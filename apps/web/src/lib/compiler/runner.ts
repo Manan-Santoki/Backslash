@@ -52,6 +52,7 @@ export interface RunnerHealth {
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 const REDIS_KEY = "compile:pending";
+const CANCEL_KEY_PREFIX = "compile:cancel:";
 const POLL_INTERVAL_MS = 1_000;
 
 const MAX_CONCURRENT_BUILDS = parseInt(
@@ -71,6 +72,7 @@ class CompileRunner {
   private totalProcessed = 0;
   private totalErrors = 0;
   private startedAt: number = Date.now();
+  private activeControllers = new Map<string, AbortController>();
 
   constructor() {
     this.maxConcurrent = MAX_CONCURRENT_BUILDS;
@@ -129,6 +131,11 @@ class CompileRunner {
           continue;
         }
 
+        if (await this.isBuildCanceled(data.buildId)) {
+          await this.handleCanceledBuild(data, "Build canceled before starting.");
+          continue;
+        }
+
         this.activeJobs++;
         console.log(`[Runner] Processing job ${data.buildId} (active=${this.activeJobs}/${this.maxConcurrent})`);
 
@@ -146,11 +153,14 @@ class CompileRunner {
     const storageUserId = data.storageUserId ?? userId;
     const actorUserId = data.triggeredByUserId ?? userId;
     const startTime = Date.now();
+    const controller = new AbortController();
 
     // Isolated build directory to prevent race conditions between concurrent builds
     const buildDir = path.join(STORAGE_PATH, "builds", buildId);
 
     try {
+      this.activeControllers.set(buildId, controller);
+
       // Step 1: Mark as compiling
       await updateBuildStatus(buildId, "compiling");
 
@@ -170,31 +180,41 @@ class CompileRunner {
       const containerResult = await runCompileContainer({
         projectDir: buildDir,
         mainFile,
+        signal: controller.signal,
       });
 
       console.log(`[Runner] Container finished for job ${buildId}, processing results...`);
 
       const durationMs = Date.now() - startTime;
 
-      // Check for PDF in the build directory
-      const pdfName = mainFile.replace(/\.tex$/, ".pdf");
-      const buildPdfPath = path.join(buildDir, pdfName);
-      const pdfInBuild = await fileExists(buildPdfPath);
-
-      // Copy PDF back to project directory if it was generated
-      const pdfOutputPath = getPdfPath(storageUserId, projectId, mainFile);
-      if (pdfInBuild) {
-        await fs.mkdir(path.dirname(pdfOutputPath), { recursive: true });
-        await fs.copyFile(buildPdfPath, pdfOutputPath);
-      }
-
-      const pdfExists = await fileExists(pdfOutputPath);
       const parsedEntries = parseLatexLog(containerResult.logs);
       const hasErrors = parsedEntries.some((e) => e.type === "error");
+      const buildErrors = containerResult.canceled
+        ? []
+        : parsedEntries.filter((e) => e.type === "error");
+      let pdfExists = false;
+      const pdfOutputPath = getPdfPath(storageUserId, projectId, mainFile);
+
+      if (!containerResult.canceled) {
+        // Check for PDF in the build directory
+        const pdfName = mainFile.replace(/\.tex$/, ".pdf");
+        const buildPdfPath = path.join(buildDir, pdfName);
+        const pdfInBuild = await fileExists(buildPdfPath);
+
+        // Copy PDF back to project directory if it was generated
+        if (pdfInBuild) {
+          await fs.mkdir(path.dirname(pdfOutputPath), { recursive: true });
+          await fs.copyFile(buildPdfPath, pdfOutputPath);
+        }
+
+        pdfExists = await fileExists(pdfOutputPath);
+      }
 
       // Determine final status
-      let finalStatus: "success" | "error" | "timeout";
-      if (containerResult.timedOut) {
+      let finalStatus: "success" | "error" | "timeout" | "canceled";
+      if (containerResult.canceled) {
+        finalStatus = "canceled";
+      } else if (containerResult.timedOut) {
         finalStatus = "timeout";
       } else if (containerResult.exitCode !== 0 || hasErrors || !pdfExists) {
         finalStatus = "error";
@@ -207,7 +227,9 @@ class CompileRunner {
         .update(builds)
         .set({
           status: finalStatus,
-          logs: containerResult.logs,
+          logs: containerResult.canceled
+            ? "Build canceled by user."
+            : containerResult.logs,
           durationMs,
           exitCode: containerResult.exitCode,
           pdfPath: pdfExists ? pdfOutputPath : null,
@@ -221,9 +243,11 @@ class CompileRunner {
         buildId,
         status: finalStatus,
         pdfUrl: pdfExists ? `/api/projects/${projectId}/pdf` : null,
-        logs: containerResult.logs,
+        logs: containerResult.canceled
+          ? "Build canceled by user."
+          : containerResult.logs,
         durationMs,
-        errors: parsedEntries.filter((e) => e.type === "error"),
+        errors: buildErrors,
         triggeredByUserId: actorUserId,
       });
 
@@ -258,6 +282,7 @@ class CompileRunner {
       this.totalErrors++;
       console.error(`[Runner] Job ${buildId} failed: ${errorMessage}`);
     } finally {
+      this.activeControllers.delete(buildId);
       // Always clean up the isolated build directory
       try {
         await fs.rm(buildDir, { recursive: true, force: true });
@@ -305,6 +330,87 @@ class CompileRunner {
     }
 
     console.log("[Runner] Compile runner stopped");
+  }
+
+  async cancelBuild(buildId: string): Promise<{ wasQueued: boolean; wasRunning: boolean }> {
+    const wasRunning = this.activeControllers.has(buildId);
+    if (wasRunning) {
+      this.activeControllers.get(buildId)?.abort();
+    }
+
+    const wasQueued = await this.removeQueuedJob(buildId);
+    await this.redis.setex(`${CANCEL_KEY_PREFIX}${buildId}`, 900, "1");
+
+    return { wasQueued, wasRunning };
+  }
+
+  private async removeQueuedJob(buildId: string): Promise<boolean> {
+    const entries = await this.redis.lrange(REDIS_KEY, 0, -1);
+    if (entries.length === 0) return false;
+
+    const remaining: string[] = [];
+    let removed = false;
+
+    for (const entry of entries) {
+      try {
+        const parsed = JSON.parse(entry) as CompileJobData;
+        if (parsed.buildId === buildId) {
+          removed = true;
+          continue;
+        }
+      } catch {
+        // Keep malformed entries to avoid losing jobs
+      }
+      remaining.push(entry);
+    }
+
+    if (!removed) return false;
+
+    const pipeline = this.redis.multi();
+    pipeline.del(REDIS_KEY);
+    if (remaining.length > 0) {
+      pipeline.rpush(REDIS_KEY, ...remaining);
+    }
+    await pipeline.exec();
+
+    return true;
+  }
+
+  private async isBuildCanceled(buildId: string): Promise<boolean> {
+    const key = `${CANCEL_KEY_PREFIX}${buildId}`;
+    const canceled = await this.redis.get(key);
+    if (canceled) {
+      await this.redis.del(key);
+      return true;
+    }
+    return false;
+  }
+
+  private async handleCanceledBuild(
+    data: CompileJobData,
+    message: string
+  ): Promise<void> {
+    const actorUserId = data.triggeredByUserId ?? data.userId;
+    await db
+      .update(builds)
+      .set({
+        status: "canceled",
+        logs: message,
+        exitCode: -1,
+        completedAt: new Date(),
+      })
+      .where(eq(builds.id, data.buildId));
+
+    broadcastBuildUpdate(actorUserId, {
+      projectId: data.projectId,
+      buildId: data.buildId,
+      status: "canceled",
+      pdfUrl: null,
+      logs: message,
+      durationMs: 0,
+      errors: [],
+      triggeredByUserId: actorUserId,
+    });
   }
 }
 
@@ -407,6 +513,16 @@ export async function addCompileJob(data: CompileJobData): Promise<void> {
     runner = startCompileRunner();
   }
   await runner.addJob(data);
+}
+
+export async function cancelCompileJob(
+  buildId: string
+): Promise<{ wasQueued: boolean; wasRunning: boolean }> {
+  let runner = getRunnerInstance();
+  if (!runner) {
+    runner = startCompileRunner();
+  }
+  return runner.cancelBuild(buildId);
 }
 
 export async function shutdownRunner(): Promise<void> {
