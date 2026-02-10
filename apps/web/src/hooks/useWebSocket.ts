@@ -21,12 +21,14 @@ interface BuildCompleteData {
   logs: string;
   durationMs: number;
   errors: ParsedLogEntry[];
+  triggeredByUserId?: string | null;
 }
 
 interface BuildStatusData {
   projectId: string;
   buildId: string;
   status: "queued" | "compiling";
+  triggeredByUserId?: string | null;
 }
 
 interface SelfIdentity {
@@ -56,6 +58,18 @@ interface UseWebSocketOptions {
   // Chat events
   onChatMessage?: (message: ChatMessage) => void;
   onChatHistory?: (messages: ChatMessage[]) => void;
+  onChatRead?: (data: {
+    userId: string;
+    lastReadMessageId: string;
+    timestamp: number;
+  }) => void;
+  onChatReadState?: (
+    reads: Array<{
+      userId: string;
+      lastReadMessageId: string;
+      timestamp: number;
+    }>
+  ) => void;
   // File events
   onFileCreated?: (data: { userId: string; file: { id: string; path: string; isDirectory: boolean } }) => void;
   onFileDeleted?: (data: { userId: string; fileId: string; path: string }) => void;
@@ -159,6 +173,11 @@ export function useWebSocket(
     socketRef.current?.emit("chat:send", { text });
   }, []);
 
+  const sendChatRead = useCallback((lastReadMessageId: string) => {
+    if (!lastReadMessageId) return;
+    socketRef.current?.emit("chat:read", { lastReadMessageId });
+  }, []);
+
   const leaveProject = useCallback((projId: string) => {
     socketRef.current?.emit("leave:project", { projectId: projId });
   }, []);
@@ -250,6 +269,30 @@ export function useWebSocket(
       optionsRef.current.onChatHistory?.(data.messages);
     });
 
+    socket.on(
+      "chat:read",
+      (data: {
+        userId: string;
+        lastReadMessageId: string;
+        timestamp: number;
+      }) => {
+        optionsRef.current.onChatRead?.(data);
+      }
+    );
+
+    socket.on(
+      "chat:readState",
+      (data: {
+        reads: Array<{
+          userId: string;
+          lastReadMessageId: string;
+          timestamp: number;
+        }>;
+      }) => {
+        optionsRef.current.onChatReadState?.(data.reads);
+      }
+    );
+
     // File events
     socket.on(
       "file:created",
@@ -290,6 +333,7 @@ export function useWebSocket(
     sendCursorMove,
     sendDocChange,
     sendChatMessage,
+    sendChatRead,
     leaveProject,
   };
 }

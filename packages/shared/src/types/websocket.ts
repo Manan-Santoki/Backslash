@@ -8,6 +8,7 @@ export interface BuildStatusEvent {
   projectId: string;
   buildId: string;
   status: "queued" | "compiling";
+  triggeredByUserId?: string | null;
 }
 
 export interface BuildCompleteEvent {
@@ -19,6 +20,23 @@ export interface BuildCompleteEvent {
   logs: string;
   durationMs: number;
   errors: ParsedLogEntry[];
+  triggeredByUserId?: string | null;
+}
+
+export interface ChatReadEvent {
+  type: "chat:read";
+  userId: string;
+  lastReadMessageId: string;
+  timestamp: number;
+}
+
+export interface ChatReadStateEvent {
+  type: "chat:readState";
+  reads: Array<{
+    userId: string;
+    lastReadMessageId: string;
+    timestamp: number;
+  }>;
 }
 
 export type ServerToClientEvent = BuildStatusEvent | BuildCompleteEvent;
@@ -60,6 +78,8 @@ export interface ServerToClientEvents {
   // Chat events
   "chat:message": (data: ChatMessage) => void;
   "chat:history": (data: { messages: ChatMessage[] }) => void;
+  "chat:read": (data: Omit<ChatReadEvent, "type">) => void;
+  "chat:readState": (data: Omit<ChatReadStateEvent, "type">) => void;
 
   // File events (real-time file tree updates)
   "file:created": (data: { userId: string; file: { id: string; path: string; isDirectory: boolean } }) => void;
@@ -83,6 +103,7 @@ export interface ClientToServerEvents {
 
   // Chat
   "chat:send": (data: { text: string }) => void;
+  "chat:read": (data: { lastReadMessageId: string }) => void;
 }
 
 // ─── Document Change Types ─────────────────────────

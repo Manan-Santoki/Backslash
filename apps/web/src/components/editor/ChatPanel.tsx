@@ -13,6 +13,12 @@ interface ChatPanelProps {
   currentUserId: string;
   /** Map of userId → color for presence coloring */
   userColors: Map<string, string>;
+  /** Map of userId → display name for read receipts */
+  userNames?: Map<string, string>;
+  /** Per-user read receipts keyed by userId */
+  readState?: Map<string, { lastReadMessageId: string; timestamp: number }>;
+  /** Called when the user has read through a message */
+  onMarkRead?: (lastReadMessageId: string) => void;
   /** Static share history entries shown at the top of chat */
   shareHistoryEntries?: string[];
 }
@@ -24,25 +30,67 @@ export function ChatPanel({
   onSendMessage,
   currentUserId,
   userColors,
+  userNames = new Map(),
+  readState = new Map(),
+  onMarkRead,
   shareHistoryEntries = [],
 }: ChatPanelProps) {
-  const [collapsed, setCollapsed] = useState(true);
+  const [collapsed, setCollapsed] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try {
+      return window.localStorage.getItem("chat-panel-collapsed") !== "false";
+    } catch {
+      return true;
+    }
+  });
   const [input, setInput] = useState("");
   const [unreadCount, setUnreadCount] = useState(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const prevMessageCountRef = useRef(messages.length);
+  const initializedMessagesRef = useRef(false);
+  const lastMarkedReadRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        "chat-panel-collapsed",
+        collapsed ? "true" : "false"
+      );
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [collapsed]);
 
   // Scroll to bottom on new messages
   useEffect(() => {
+    if (!initializedMessagesRef.current) {
+      initializedMessagesRef.current = true;
+      prevMessageCountRef.current = messages.length;
+      return;
+    }
+
     if (!collapsed) {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
       setUnreadCount(0);
     } else if (messages.length > prevMessageCountRef.current) {
-      // Increment unread count when collapsed
-      setUnreadCount((prev) => prev + (messages.length - prevMessageCountRef.current));
+      // Increment unread count only for messages from others
+      const incoming = messages.slice(prevMessageCountRef.current);
+      const unreadIncoming = incoming.filter((m) => m.userId !== currentUserId).length;
+      if (unreadIncoming > 0) {
+        setUnreadCount((prev) => prev + unreadIncoming);
+      }
     }
     prevMessageCountRef.current = messages.length;
-  }, [messages.length, collapsed]);
+  }, [messages, collapsed, currentUserId]);
+
+  useEffect(() => {
+    if (collapsed || messages.length === 0 || !onMarkRead) return;
+    const lastMessage = messages[messages.length - 1];
+    if (!lastMessage?.id) return;
+    if (lastMarkedReadRef.current === lastMessage.id) return;
+    lastMarkedReadRef.current = lastMessage.id;
+    onMarkRead(lastMessage.id);
+  }, [collapsed, messages, onMarkRead]);
 
   function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -117,12 +165,61 @@ export function ChatPanel({
               </div>
             )}
 
-            {messages.map((msg) => {
-              const isOwn = msg.userId === currentUserId;
-              const color = userColors.get(msg.userId) || "#89b4fa";
+            {(() => {
+              const map = new Map<string, number>();
+              for (let i = 0; i < messages.length; i++) {
+                map.set(messages[i].id, i);
+              }
+              return messages.map((msg) => {
+                const isOwn = msg.userId === currentUserId;
+                const isBuild = msg.kind === "build" || msg.userId === "system:build";
+                const isSystem = msg.kind === "system" || isBuild;
+                const color = userColors.get(msg.userId) || "#89b4fa";
 
-              return (
-                <div key={msg.id} className={cn("flex flex-col", isOwn && "items-end")}>
+                const messageIndex = map.get(msg.id) ?? -1;
+                const readBy = isOwn
+                  ? Array.from(readState.entries())
+                      .filter(([userId, receipt]) => {
+                        if (userId === currentUserId) return false;
+                        const readIdx = map.get(receipt.lastReadMessageId);
+                        return readIdx !== undefined && readIdx >= messageIndex;
+                      })
+                      .map(([userId]) => userNames.get(userId) || "Collaborator")
+                  : [];
+
+                if (isSystem) {
+                  return (
+                    <div key={msg.id} className="flex justify-center py-1">
+                      <div className="max-w-[95%] rounded-md border border-accent/20 bg-accent/5 px-2.5 py-1.5 text-[11px] text-text-secondary">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium text-accent">{msg.userName}</span>
+                          {msg.build?.status && (
+                            <span
+                              className={cn(
+                                "rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide",
+                                msg.build.status === "success" && "bg-success/15 text-success",
+                                msg.build.status === "error" && "bg-error/15 text-error",
+                                msg.build.status === "timeout" && "bg-warning/15 text-warning",
+                                (msg.build.status === "queued" ||
+                                  msg.build.status === "compiling") &&
+                                  "bg-accent/15 text-accent"
+                              )}
+                            >
+                              {msg.build.status}
+                            </span>
+                          )}
+                          <span className="text-[10px] text-text-muted">
+                            {formatTime(msg.timestamp)}
+                          </span>
+                        </div>
+                        <p className="mt-1 leading-relaxed">{msg.text}</p>
+                      </div>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={msg.id} className={cn("flex flex-col", isOwn && "items-end")}>
                   <div className="flex items-baseline gap-1.5 mb-0.5">
                     <span
                       className="text-[11px] font-semibold"
@@ -144,9 +241,15 @@ export function ChatPanel({
                   >
                     {msg.text}
                   </div>
+                  {isOwn && readBy.length > 0 && (
+                    <p className="mt-1 text-[10px] text-text-muted">
+                      Read by {readBy.join(", ")}
+                    </p>
+                  )}
                 </div>
               );
-            })}
+              });
+            })()}
             <div ref={messagesEndRef} />
           </div>
 

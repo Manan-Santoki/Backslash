@@ -73,6 +73,12 @@ interface CurrentUser {
   name: string;
 }
 
+interface ChatReadReceipt {
+  userId: string;
+  lastReadMessageId: string;
+  timestamp: number;
+}
+
 interface CollaboratorInfo {
   id: string;
   userId: string;
@@ -147,6 +153,7 @@ export function EditorLayout({
   const [buildDuration, setBuildDuration] = useState<number | null>(
     initialBuild?.durationMs ?? null
   );
+  const [buildActorName, setBuildActorName] = useState<string | null>(null);
   const [buildErrors, setBuildErrors] = useState<LogError[]>([]);
   const [pdfLoading, setPdfLoading] = useState(false);
 
@@ -175,6 +182,9 @@ export function EditorLayout({
 
   const [presenceUsers, setPresenceUsers] = useState<PresenceUser[]>([]);
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatReadState, setChatReadState] = useState<
+    Map<string, { lastReadMessageId: string; timestamp: number }>
+  >(new Map());
   const [isSharedProject, setIsSharedProject] = useState(role !== "owner");
   const [shareHistoryEntries, setShareHistoryEntries] = useState<string[]>([]);
 
@@ -197,6 +207,16 @@ export function EditorLayout({
   // User color map for chat
   const userColorMap = new Map<string, string>();
   presenceUsers.forEach((u) => userColorMap.set(u.userId, u.color));
+  const userNameMap = new Map<string, string>();
+  presenceUsers.forEach((u) => userNameMap.set(u.userId, u.name));
+  chatMessages.forEach((m) => {
+    if (!userNameMap.has(m.userId)) {
+      userNameMap.set(m.userId, m.userName);
+    }
+  });
+  if (currentUser.id) {
+    userNameMap.set(currentUser.id, currentUser.name || "You");
+  }
 
   const codeEditorRef = useRef<CodeEditorHandle>(null);
   const pdfViewerRef = useRef<PdfViewerHandle>(null);
@@ -307,6 +327,18 @@ export function EditorLayout({
       setIsSharedProject(role !== "owner");
     }
   }, [formatExpiry, project.id, role, shareToken]);
+
+  const resolveActorName = useCallback(
+    (triggeredByUserId?: string | null): string | null => {
+      if (!triggeredByUserId) return null;
+      if (triggeredByUserId === currentUser.id) return "You";
+      return (
+        presenceUsers.find((u) => u.userId === triggeredByUserId)?.name ??
+        null
+      );
+    },
+    [currentUser.id, presenceUsers]
+  );
 
   // ─── Helpers ───────────────────────────────────────
 
@@ -545,6 +577,7 @@ export function EditorLayout({
     sendCursorMove,
     sendDocChange,
     sendChatMessage,
+    sendChatRead,
   } = useWebSocket(project.id, {
     shareToken,
     onSelfIdentity: (identity) => {
@@ -557,6 +590,7 @@ export function EditorLayout({
     },
     onBuildStatus: (data) => {
       setBuildStatus(data.status);
+      setBuildActorName(resolveActorName(data.triggeredByUserId));
       if (!compilingRef.current) {
         compilingRef.current = true;
         setCompiling(true);
@@ -567,6 +601,7 @@ export function EditorLayout({
       clearAllPolling();
 
       setBuildStatus(data.status);
+      setBuildActorName(resolveActorName(data.triggeredByUserId));
       setBuildLogs(data.logs ?? "");
       setBuildDuration(data.durationMs);
       setBuildErrors((data.errors as LogError[]) ?? []);
@@ -657,6 +692,26 @@ export function EditorLayout({
     },
     onChatHistory: (messages) => {
       setChatMessages(messages);
+    },
+    onChatRead: (receipt: ChatReadReceipt) => {
+      setChatReadState((prev) => {
+        const next = new Map(prev);
+        next.set(receipt.userId, {
+          lastReadMessageId: receipt.lastReadMessageId,
+          timestamp: receipt.timestamp,
+        });
+        return next;
+      });
+    },
+    onChatReadState: (reads: ChatReadReceipt[]) => {
+      const next = new Map<string, { lastReadMessageId: string; timestamp: number }>();
+      for (const read of reads) {
+        next.set(read.userId, {
+          lastReadMessageId: read.lastReadMessageId,
+          timestamp: read.timestamp,
+        });
+      }
+      setChatReadState(next);
     },
     // File events
     onFileCreated: () => {
@@ -797,6 +852,7 @@ export function EditorLayout({
         saveViewPositionsBeforeBuild();
         compilingRef.current = true;
         pendingRecompileRef.current = false;
+        setBuildActorName("You");
         setCompiling(true);
         setBuildStatus("queued");
         setPdfLoading(true);
@@ -869,6 +925,7 @@ export function EditorLayout({
     saveViewPositionsBeforeBuild();
     compilingRef.current = true;
     pendingRecompileRef.current = false;
+    setBuildActorName("You");
     setCompiling(true);
     setBuildStatus("compiling");
     setPdfLoading(true);
@@ -1222,6 +1279,7 @@ export function EditorLayout({
               status={buildStatus}
               duration={buildDuration}
               errors={buildErrors}
+              actorName={buildActorName}
               onErrorClick={handleErrorClick}
             />
           </Panel>
@@ -1234,6 +1292,9 @@ export function EditorLayout({
             onSendMessage={sendChatMessage}
             currentUserId={currentUser.id}
             userColors={userColorMap}
+            userNames={userNameMap}
+            readState={chatReadState}
+            onMarkRead={sendChatRead}
             shareHistoryEntries={shareHistoryEntries}
           />
         )}

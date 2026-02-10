@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { projects, builds } from "@/lib/db/schema";
 import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { addCompileJob } from "@/lib/compiler/runner";
+import { broadcastBuildUpdate } from "@/lib/websocket/server";
 import { healthCheck as dockerHealthCheck, getDockerClient } from "@/lib/compiler/docker";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
@@ -29,7 +30,8 @@ export async function POST(
     }
 
     const project = access.project;
-    const actorUserId = access.user?.id ?? project.userId;
+    const storageUserId = project.userId;
+    const actorUserId = access.user?.id ?? storageUserId;
 
       // ── Pre-flight: verify Docker is reachable ───────
       const dockerOk = await dockerHealthCheck();
@@ -80,8 +82,17 @@ export async function POST(
         buildId,
         projectId,
         userId: actorUserId,
+        storageUserId,
+        triggeredByUserId: actorUserId,
         engine: project.engine,
         mainFile: project.mainFile,
+      });
+
+      broadcastBuildUpdate(actorUserId, {
+        projectId,
+        buildId,
+        status: "queued",
+        triggeredByUserId: actorUserId,
       });
 
       return NextResponse.json(

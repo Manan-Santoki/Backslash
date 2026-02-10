@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { projects, builds } from "@/lib/db/schema";
 import { withApiKey } from "@/lib/auth/apikey";
 import { addCompileJob } from "@/lib/compiler/runner";
+import { broadcastBuildUpdate } from "@/lib/websocket/server";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
@@ -44,8 +45,17 @@ export async function POST(
         buildId,
         projectId,
         userId: user.id,
+        storageUserId: user.id,
+        triggeredByUserId: user.id,
         engine: project.engine,
         mainFile: project.mainFile,
+      });
+
+      broadcastBuildUpdate(user.id, {
+        projectId,
+        buildId,
+        status: "queued",
+        triggeredByUserId: user.id,
       });
 
       return NextResponse.json(

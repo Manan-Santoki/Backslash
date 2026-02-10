@@ -6,7 +6,7 @@ import {
   renameFileSchema,
   validateFilePath,
 } from "@/lib/utils/validation";
-import { broadcastFileEvent } from "@/lib/websocket/server";
+import { broadcastBuildUpdate, broadcastFileEvent } from "@/lib/websocket/server";
 import * as storage from "@/lib/storage";
 import { eq, and, like } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
@@ -171,7 +171,8 @@ export async function PUT(
 
     let buildQueued = false;
 
-    const actorUserId = access.user?.id ?? project.userId;
+    const storageUserId = project.userId;
+    const actorUserId = access.user?.id ?? storageUserId;
 
     // If autoCompile is true, create a build record and enqueue compile job
     if (autoCompile) {
@@ -189,8 +190,17 @@ export async function PUT(
         buildId,
         projectId,
         userId: actorUserId,
+        storageUserId,
+        triggeredByUserId: actorUserId,
         engine: project.engine,
         mainFile: project.mainFile,
+      });
+
+      broadcastBuildUpdate(actorUserId, {
+        projectId,
+        buildId,
+        status: "queued",
+        triggeredByUserId: actorUserId,
       });
 
       buildQueued = true;

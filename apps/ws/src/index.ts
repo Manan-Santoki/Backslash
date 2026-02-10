@@ -31,6 +31,20 @@ interface ChatMessage {
   userName: string;
   text: string;
   timestamp: number;
+  kind?: "user" | "system" | "build";
+  build?: {
+    buildId: string;
+    status: "queued" | "compiling" | "success" | "error" | "timeout";
+    durationMs?: number | null;
+    actorUserId?: string | null;
+    actorName?: string | null;
+  };
+}
+
+interface ChatReadReceipt {
+  userId: string;
+  lastReadMessageId: string;
+  timestamp: number;
 }
 
 interface DocChange {
@@ -43,8 +57,8 @@ interface DocChange {
 
 interface ServerToClientEvents {
   "self:identity": (data: { userId: string; name: string; email: string; color: string }) => void;
-  "build:status": (data: { projectId: string; buildId: string; status: "queued" | "compiling" }) => void;
-  "build:complete": (data: { projectId: string; buildId: string; status: string; pdfUrl: string | null; logs: string; durationMs: number; errors: any[] }) => void;
+  "build:status": (data: { projectId: string; buildId: string; status: "queued" | "compiling"; triggeredByUserId?: string | null }) => void;
+  "build:complete": (data: { projectId: string; buildId: string; status: string; pdfUrl: string | null; logs: string; durationMs: number; errors: any[]; triggeredByUserId?: string | null }) => void;
   "presence:users": (data: { users: PresenceUser[] }) => void;
   "presence:joined": (data: { user: PresenceUser }) => void;
   "presence:left": (data: { userId: string }) => void;
@@ -54,6 +68,8 @@ interface ServerToClientEvents {
   "doc:changed": (data: { userId: string; fileId: string; changes: DocChange[]; version: number }) => void;
   "chat:message": (data: ChatMessage) => void;
   "chat:history": (data: { messages: ChatMessage[] }) => void;
+  "chat:read": (data: ChatReadReceipt) => void;
+  "chat:readState": (data: { reads: ChatReadReceipt[] }) => void;
   "file:created": (data: { userId: string; file: { id: string; path: string; isDirectory: boolean } }) => void;
   "file:deleted": (data: { userId: string; fileId: string; path: string }) => void;
   "file:saved": (data: { userId: string; fileId: string; path: string }) => void;
@@ -66,6 +82,7 @@ interface ClientToServerEvents {
   "cursor:move": (data: { fileId: string; selection: CursorSelection }) => void;
   "doc:change": (data: { fileId: string; changes: DocChange[]; version: number }) => void;
   "chat:send": (data: { text: string }) => void;
+  "chat:read": (data: { lastReadMessageId: string }) => void;
 }
 
 // ─── Configuration ─────────────────────────────────
@@ -250,11 +267,15 @@ const presenceMap = new Map<string, Map<string, PresenceUser>>();
 
 // Chat history: projectId -> ChatMessage[] (last 100)
 const chatHistory = new Map<string, ChatMessage[]>();
+// Per-project chat read markers: projectId -> Map<userId, ChatReadReceipt>
+const chatReadState = new Map<string, Map<string, ChatReadReceipt>>();
 
 const MAX_CHAT_HISTORY = 100;
 
 // Track which project each socket is in: socketId -> projectId
 const socketProjectMap = new Map<string, string>();
+const connectedUserSocketCounts = new Map<string, number>();
+const connectedUserNames = new Map<string, string>();
 
 function getProjectPresence(projectId: string): Map<string, PresenceUser> {
   let map = presenceMap.get(projectId);
@@ -280,6 +301,33 @@ function addChatMessage(projectId: string, msg: ChatMessage): void {
   if (msgs.length > MAX_CHAT_HISTORY) {
     msgs.shift();
   }
+}
+
+function getProjectReadState(projectId: string): Map<string, ChatReadReceipt> {
+  let reads = chatReadState.get(projectId);
+  if (!reads) {
+    reads = new Map();
+    chatReadState.set(projectId, reads);
+  }
+  return reads;
+}
+
+function upsertReadState(
+  projectId: string,
+  userId: string,
+  lastReadMessageId: string,
+  timestamp: number = Date.now()
+): ChatReadReceipt {
+  const reads = getProjectReadState(projectId);
+  const receipt: ChatReadReceipt = { userId, lastReadMessageId, timestamp };
+  reads.set(userId, receipt);
+  return receipt;
+}
+
+function formatDuration(durationMs?: number): string {
+  if (!durationMs || durationMs < 0) return "";
+  if (durationMs < 1000) return `${durationMs}ms`;
+  return `${(durationMs / 1000).toFixed(1)}s`;
 }
 
 // ─── Authentication Middleware ──────────────────────
@@ -349,6 +397,11 @@ io.use(async (socket, next) => {
 io.on("connection", (socket) => {
   const { userId, name, email, color, isAnonymous, shareToken } = socket.data;
   console.log(`[WS] User connected: ${name} (${userId})`);
+  connectedUserSocketCounts.set(
+    userId,
+    (connectedUserSocketCounts.get(userId) ?? 0) + 1
+  );
+  connectedUserNames.set(userId, name);
 
   // Tell the client its assigned identity (especially useful for anonymous users)
   socket.emit("self:identity", { userId, name, email, color });
@@ -402,6 +455,10 @@ io.on("connection", (socket) => {
     const history = getProjectChat(projectId);
     if (history.length > 0) {
       socket.emit("chat:history", { messages: history });
+    }
+    const reads = Array.from(getProjectReadState(projectId).values());
+    if (reads.length > 0) {
+      socket.emit("chat:readState", { reads });
     }
 
     // Notify others about the new user
@@ -482,12 +539,33 @@ io.on("connection", (socket) => {
       userName: name,
       text: text.trim(),
       timestamp: Date.now(),
+      kind: "user",
     };
 
     addChatMessage(projectId, msg);
 
     // Broadcast to everyone in the project room (including sender)
-    io.to(getProjectRoom(projectId)).emit("chat:message", msg);
+    const projectRoom = getProjectRoom(projectId);
+    io.to(projectRoom).emit("chat:message", msg);
+    const senderRead = upsertReadState(projectId, userId, msg.id, msg.timestamp);
+    io.to(projectRoom).emit("chat:read", senderRead);
+  });
+
+  socket.on("chat:read", ({ lastReadMessageId }) => {
+    const projectId = socket.data.projectId;
+    if (!projectId || !lastReadMessageId) return;
+
+    const history = getProjectChat(projectId);
+    const messageExists = history.some((msg) => msg.id === lastReadMessageId);
+    if (!messageExists) return;
+
+    const current = getProjectReadState(projectId).get(userId);
+    if (current?.lastReadMessageId === lastReadMessageId) {
+      return;
+    }
+
+    const receipt = upsertReadState(projectId, userId, lastReadMessageId);
+    io.to(getProjectRoom(projectId)).emit("chat:read", receipt);
   });
 
   // ── Disconnect ─────────────────────────────
@@ -496,6 +574,13 @@ io.on("connection", (socket) => {
     const projectId = socketProjectMap.get(socket.id);
     if (projectId) {
       leaveProject(socket, projectId);
+    }
+    const remaining = (connectedUserSocketCounts.get(userId) ?? 1) - 1;
+    if (remaining <= 0) {
+      connectedUserSocketCounts.delete(userId);
+      connectedUserNames.delete(userId);
+    } else {
+      connectedUserSocketCounts.set(userId, remaining);
     }
     console.log(`[WS] User disconnected: ${name} (${userId}) - ${reason}`);
   });
@@ -566,6 +651,7 @@ function handleBuildUpdate(message: string) {
 
   const userRoom = getUserRoom(userId);
   const projectRoom = getProjectRoom(payload.projectId);
+  const triggeredByUserId = payload.triggeredByUserId ?? userId ?? null;
 
   // Determine event type based on status
   const isComplete =
@@ -582,14 +668,62 @@ function handleBuildUpdate(message: string) {
       logs: payload.logs ?? "",
       durationMs: payload.durationMs ?? 0,
       errors: payload.errors ?? [],
+      triggeredByUserId,
     });
   } else {
     io.to(userRoom).to(projectRoom).emit("build:status", {
       projectId: payload.projectId,
       buildId: payload.buildId,
       status: payload.status,
+      triggeredByUserId,
     });
   }
+
+  const actorName = triggeredByUserId
+    ? connectedUserNames.get(triggeredByUserId) ?? null
+    : null;
+  const actorLabel = actorName ?? "A collaborator";
+  const shortBuildId = typeof payload.buildId === "string"
+    ? payload.buildId.slice(0, 8)
+    : "unknown";
+
+  let text = "";
+  switch (payload.status) {
+    case "queued":
+      text = `${actorLabel} queued build ${shortBuildId}.`;
+      break;
+    case "compiling":
+      text = `${actorLabel} started compiling build ${shortBuildId}.`;
+      break;
+    case "success":
+      text = `Build ${shortBuildId} succeeded${formatDuration(payload.durationMs) ? ` in ${formatDuration(payload.durationMs)}` : ""}.`;
+      break;
+    case "timeout":
+      text = `Build ${shortBuildId} timed out${formatDuration(payload.durationMs) ? ` after ${formatDuration(payload.durationMs)}` : ""}.`;
+      break;
+    default:
+      text = `Build ${shortBuildId} failed${formatDuration(payload.durationMs) ? ` after ${formatDuration(payload.durationMs)}` : ""}.`;
+      break;
+  }
+
+  const buildMessage: ChatMessage = {
+    id: randomUUID(),
+    userId: "system:build",
+    userName: "Build Bot",
+    text,
+    timestamp: Date.now(),
+    kind: "build",
+    build: {
+      buildId: payload.buildId,
+      status: payload.status,
+      durationMs: payload.durationMs ?? null,
+      actorUserId: triggeredByUserId,
+      actorName,
+    },
+  };
+
+  addChatMessage(payload.projectId, buildMessage);
+  io.to(projectRoom).emit("chat:message", buildMessage);
 }
 
 function handleFileUpdate(message: string) {

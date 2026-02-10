@@ -25,6 +25,7 @@ interface BuildLogsProps {
   status: string;
   duration: number | null;
   errors: LogError[];
+  actorName?: string | null;
   onErrorClick?: (file: string, line: number) => void;
 }
 
@@ -75,6 +76,7 @@ export function BuildLogs({
   status,
   duration,
   errors,
+  actorName = null,
   onErrorClick,
 }: BuildLogsProps) {
   const [expanded, setExpanded] = useState(false);
@@ -97,6 +99,9 @@ export function BuildLogs({
           <span className="text-xs font-medium text-text-secondary">
             {getStatusLabel(status)}
           </span>
+          {actorName && (status === "queued" || status === "compiling") && (
+            <span className="text-xs text-text-muted">by {actorName}</span>
+          )}
 
           {duration !== null && (
             <span className="text-xs text-text-muted">
