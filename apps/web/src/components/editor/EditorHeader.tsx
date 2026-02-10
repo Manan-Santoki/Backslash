@@ -7,6 +7,7 @@ import {
   Download,
   FileArchive,
   Loader2,
+  Square,
   Zap,
   ZapOff,
   CheckCircle2,
@@ -14,6 +15,7 @@ import {
   Share2,
   ChevronDown,
   Check,
+  Ban,
 } from "lucide-react";
 import {
   Tooltip,
@@ -50,6 +52,7 @@ interface EditorHeaderProps {
   autoCompileEnabled: boolean;
   onAutoCompileToggle: () => void;
   buildStatus: string;
+  onCancelBuild?: () => void;
   presenceUsers?: PresenceUser[];
   currentUserId?: string;
   role?: "owner" | "viewer" | "editor";
@@ -89,6 +92,13 @@ function BuildStatusBadge({ status }: { status: string }) {
           <span className="hidden md:inline">Building</span>
         </div>
       );
+    case "canceled":
+      return (
+        <div className="flex items-center gap-1.5 text-xs text-text-muted">
+          <Ban className="h-3.5 w-3.5" />
+          <span className="hidden md:inline">Canceled</span>
+        </div>
+      );
     default:
       return null;
   }
@@ -103,6 +113,8 @@ function BuildStatusDot({ status }: { status: string | null }) {
       ? "bg-success"
       : status === "error" || status === "timeout"
         ? "bg-error"
+        : status === "canceled"
+          ? "bg-text-muted"
         : "bg-text-muted";
   return <span className={cn("inline-block h-2 w-2 rounded-full shrink-0", color)} />;
 }
@@ -117,6 +129,7 @@ export function EditorHeader({
   autoCompileEnabled,
   onAutoCompileToggle,
   buildStatus,
+  onCancelBuild,
   presenceUsers = [],
   currentUserId = "",
   role = "owner",
@@ -286,6 +299,24 @@ export function EditorHeader({
               <p>Compile project (Ctrl+Enter)</p>
             </TooltipContent>
           </Tooltip>
+
+          {(buildStatus === "compiling" || buildStatus === "queued") && onCancelBuild && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onCancelBuild}
+                  className="flex items-center gap-1.5 rounded-lg border border-border px-3 py-1 text-sm font-medium text-text-secondary transition-colors hover:bg-bg-elevated hover:text-text-primary"
+                >
+                  <Square className="h-3.5 w-3.5" />
+                  <span className="hidden sm:inline">Cancel</span>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Cancel build</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
 
           {/* Auto-compile toggle */}
           <Tooltip>

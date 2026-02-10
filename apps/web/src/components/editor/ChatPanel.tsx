@@ -200,6 +200,7 @@ export function ChatPanel({
                                 msg.build.status === "success" && "bg-success/15 text-success",
                                 msg.build.status === "error" && "bg-error/15 text-error",
                                 msg.build.status === "timeout" && "bg-warning/15 text-warning",
+                                msg.build.status === "canceled" && "bg-text-muted/15 text-text-muted",
                                 (msg.build.status === "queued" ||
                                   msg.build.status === "compiling") &&
                                   "bg-accent/15 text-accent"

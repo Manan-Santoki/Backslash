@@ -28,6 +28,7 @@ export const buildStatusEnum = pgEnum("build_status", [
   "success",
   "error",
   "timeout",
+  "canceled",
 ]);
 
 export const shareRoleEnum = pgEnum("share_role", [

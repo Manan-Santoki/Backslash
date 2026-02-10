@@ -52,7 +52,7 @@ export interface BuildStatusPayload {
 export interface BuildCompletePayload {
   projectId: string;
   buildId: string;
-  status: "success" | "error" | "timeout";
+  status: "success" | "error" | "timeout" | "canceled";
   pdfUrl: string | null;
   logs: string;
   durationMs: number;
@@ -71,7 +71,8 @@ export function isBuildComplete(
   return (
     payload.status === "success" ||
     payload.status === "error" ||
-    payload.status === "timeout"
+    payload.status === "timeout" ||
+    payload.status === "canceled"
   );
 }
 

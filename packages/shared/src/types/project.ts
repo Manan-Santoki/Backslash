@@ -1,6 +1,12 @@
 export type Engine = "pdflatex" | "xelatex" | "lualatex" | "latex";
 
-export type BuildStatus = "queued" | "compiling" | "success" | "error" | "timeout";
+export type BuildStatus =
+  | "queued"
+  | "compiling"
+  | "success"
+  | "error"
+  | "timeout"
+  | "canceled";
 
 export type TemplateName = "blank" | "article" | "thesis" | "beamer" | "letter";
 

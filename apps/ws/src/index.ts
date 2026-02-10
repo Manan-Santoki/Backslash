@@ -34,7 +34,7 @@ interface ChatMessage {
   kind?: "user" | "system" | "build";
   build?: {
     buildId: string;
-    status: "queued" | "compiling" | "success" | "error" | "timeout";
+    status: "queued" | "compiling" | "success" | "error" | "timeout" | "canceled";
     durationMs?: number | null;
     actorUserId?: string | null;
     actorName?: string | null;
@@ -657,7 +657,8 @@ function handleBuildUpdate(message: string) {
   const isComplete =
     payload.status === "success" ||
     payload.status === "error" ||
-    payload.status === "timeout";
+    payload.status === "timeout" ||
+    payload.status === "canceled";
 
   if (isComplete) {
     io.to(userRoom).to(projectRoom).emit("build:complete", {
@@ -700,6 +701,9 @@ function handleBuildUpdate(message: string) {
       break;
     case "timeout":
       text = `Build ${shortBuildId} timed out${formatDuration(payload.durationMs) ? ` after ${formatDuration(payload.durationMs)}` : ""}.`;
+      break;
+    case "canceled":
+      text = `Build ${shortBuildId} was canceled.`;
       break;
     default:
       text = `Build ${shortBuildId} failed${formatDuration(payload.durationMs) ? ` after ${formatDuration(payload.durationMs)}` : ""}.`;

@@ -34,7 +34,8 @@ export function useCompiler(projectId: string | null) {
         if (
           build.status === "success" ||
           build.status === "error" ||
-          build.status === "timeout"
+          build.status === "timeout" ||
+          build.status === "canceled"
         ) {
           stopPolling();
           setCompiling(false);

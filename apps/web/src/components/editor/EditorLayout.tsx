@@ -447,7 +447,8 @@ export function EditorLayout({
         if (
           build.status === "success" ||
           build.status === "error" ||
-          build.status === "timeout"
+          build.status === "timeout" ||
+          build.status === "canceled"
         ) {
           clearAllPolling();
 
@@ -496,6 +497,14 @@ export function EditorLayout({
               saveTimeoutRef.current = null;
             }
             navigateToFirstError(logsData.errors ?? []);
+          }
+
+          if (build.status === "canceled") {
+            pendingRecompileRef.current = false;
+            if (saveTimeoutRef.current) {
+              clearTimeout(saveTimeoutRef.current);
+              saveTimeoutRef.current = null;
+            }
           }
 
           resetCompileState();
@@ -560,6 +569,11 @@ export function EditorLayout({
           setBuildDuration(build.durationMs);
           setBuildErrors(data.errors ?? []);
           setAutoCompileEnabled(false);
+        } else if (build.status === "canceled") {
+          setBuildStatus(build.status);
+          setBuildLogs(build.logs ?? "");
+          setBuildDuration(build.durationMs);
+          setBuildErrors([]);
         }
       } catch {
         // Failed to check — stay at idle
@@ -644,6 +658,14 @@ export function EditorLayout({
           saveTimeoutRef.current = null;
         }
         navigateToFirstError((data.errors as LogError[]) ?? []);
+      }
+
+      if (data.status === "canceled") {
+        pendingRecompileRef.current = false;
+        if (saveTimeoutRef.current) {
+          clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = null;
+        }
       }
 
       resetCompileState();
@@ -954,6 +976,38 @@ export function EditorLayout({
     withShareToken,
   ]);
 
+  const handleCancelBuild = useCallback(async () => {
+    if (!canEdit) return;
+    if (!(buildStatus === "compiling" || buildStatus === "queued")) return;
+
+    try {
+      const res = await fetch(withShareToken(`/api/projects/${project.id}/cancel`), {
+        method: "POST",
+      });
+
+      if (!res.ok) {
+        setBuildStatus("error");
+        resetCompileState();
+        return;
+      }
+
+      setBuildActorName("You");
+      setBuildStatus("canceled");
+      setBuildLogs("Build canceled by user.");
+      setBuildDuration(null);
+      setBuildErrors([]);
+      pendingRecompileRef.current = false;
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+        saveTimeoutRef.current = null;
+      }
+      resetCompileState();
+    } catch {
+      setBuildStatus("error");
+      resetCompileState();
+    }
+  }, [buildStatus, canEdit, project.id, resetCompileState, withShareToken]);
+
   // ─── Hard safety timeout ──────────────────────────
   // If we're stuck in "compiling" for 3 minutes, force-reset.
   // This prevents the UI from being stuck forever if both WS and polling fail.
@@ -1153,6 +1207,7 @@ export function EditorLayout({
         autoCompileEnabled={autoCompileEnabled}
         onAutoCompileToggle={() => setAutoCompileEnabled((prev) => !prev)}
         buildStatus={buildStatus}
+        onCancelBuild={handleCancelBuild}
         presenceUsers={presenceUsers}
         currentUserId={currentUser.id}
         role={role}
