@@ -71,6 +71,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
     const onDocChangeRef = useRef(onDocChange);
     const onCursorChangeRef = useRef(onCursorChange);
     const isExternalUpdate = useRef(false);
+    const cursorEmitRafRef = useRef<number | null>(null);
+    const lastCursorEmitKeyRef = useRef<string>("");
     // Keep callback refs current
     useEffect(() => {
       onChangeRef.current = onChange;
@@ -267,11 +269,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           EditorView,
           lineNumbers,
           highlightActiveLine,
-          drawSelection,
           keymap,
           highlightSpecialChars,
           Decoration,
-          WidgetType,
           ViewPlugin,
           MatchDecorator,
         } = await import("@codemirror/view");
@@ -315,56 +315,6 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           },
         });
         remoteCursorFieldRef.current = remoteCursorField;
-
-        // Widget for remote cursor line
-        class RemoteCursorWidget extends WidgetType {
-          constructor(
-            readonly color: string,
-            readonly name: string
-          ) {
-            super();
-          }
-
-          toDOM() {
-            const wrapper = document.createElement("span");
-            wrapper.style.position = "relative";
-            wrapper.style.display = "inline";
-            wrapper.style.width = "0";
-            wrapper.style.overflow = "visible";
-
-            const cursor = document.createElement("span");
-            cursor.style.borderLeft = `2px solid ${this.color}`;
-            cursor.style.height = "1.2em";
-            cursor.style.position = "absolute";
-            cursor.style.top = "0";
-            cursor.style.left = "0";
-            cursor.style.pointerEvents = "none";
-            cursor.style.zIndex = "10";
-
-            const label = document.createElement("span");
-            label.textContent = this.name;
-            label.style.position = "absolute";
-            label.style.bottom = "100%";
-            label.style.left = "0";
-            label.style.backgroundColor = this.color;
-            label.style.color = "#fff";
-            label.style.fontSize = "10px";
-            label.style.padding = "1px 4px";
-            label.style.borderRadius = "2px";
-            label.style.whiteSpace = "nowrap";
-            label.style.pointerEvents = "none";
-            label.style.zIndex = "11";
-            label.style.lineHeight = "1.2";
-
-            wrapper.appendChild(cursor);
-            wrapper.appendChild(label);
-            return wrapper;
-          }
-
-          eq(other: RemoteCursorWidget) {
-            return this.color === other.color && this.name === other.name;
-          }
-        }
 
         // Plugin that reads the StateField and produces decorations
         const remoteCursorPlugin = ViewPlugin.fromClass(
@@ -411,17 +361,6 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
                 );
                 const headPos = Math.min(headLine.from + selection.head.ch, headLine.to);
 
-                // Cursor widget at the head position
-                const clampedHead = Math.min(Math.max(headPos, 0), docLength);
-                decos.push({
-                  from: clampedHead,
-                  to: clampedHead,
-                  deco: Decoration.widget({
-                    widget: new RemoteCursorWidget(color, name),
-                    side: 1,
-                  }),
-                });
-
                 // Selection highlight if anchor !== head
                 if (anchorPos !== headPos) {
                   const from = Math.min(anchorPos, headPos);
@@ -435,6 +374,30 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
                       deco: Decoration.mark({
                         attributes: {
                           style: `background-color: ${color}33;`,
+                        },
+                      }),
+                    });
+                  }
+                }
+
+                // Draw a lightweight caret marker without injecting widgets into text flow.
+                if (docLength > 0) {
+                  const clampedHead = Math.min(Math.max(headPos, 0), docLength);
+                  const caretFrom = Math.min(Math.max(clampedHead - 1, 0), docLength - 1);
+                  const caretTo = Math.min(caretFrom + 1, docLength);
+                  if (caretFrom < caretTo) {
+                    const caretStyle =
+                      clampedHead === 0
+                        ? `box-shadow: inset 2px 0 0 ${color};`
+                        : `box-shadow: inset -2px 0 0 ${color};`;
+                    decos.push({
+                      from: caretFrom,
+                      to: caretTo,
+                      deco: Decoration.mark({
+                        attributes: {
+                          class: "cm-remote-caret",
+                          "data-remote-user": name,
+                          style: caretStyle,
                         },
                       }),
                     });
@@ -569,7 +532,6 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
             StreamLanguage.define(stex),
             syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
             EditorView.lineWrapping,
-            drawSelection(),
             keymap.of([
               ...defaultKeymap,
               ...searchKeymap,
@@ -604,12 +566,22 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
 
               // Emit cursor changes
               if (update.selectionSet && !isExternalUpdate.current && onCursorChangeRef.current) {
-                const sel = update.state.selection.main;
-                const anchorLine = update.state.doc.lineAt(sel.anchor);
-                const headLine = update.state.doc.lineAt(sel.head);
-                onCursorChangeRef.current({
-                  anchor: { line: anchorLine.number, ch: sel.anchor - anchorLine.from },
-                  head: { line: headLine.number, ch: sel.head - headLine.from },
+                if (cursorEmitRafRef.current !== null) {
+                  cancelAnimationFrame(cursorEmitRafRef.current);
+                }
+                cursorEmitRafRef.current = requestAnimationFrame(() => {
+                  cursorEmitRafRef.current = null;
+                  const sel = update.state.selection.main;
+                  const anchorLine = update.state.doc.lineAt(sel.anchor);
+                  const headLine = update.state.doc.lineAt(sel.head);
+                  const payload: CursorSelection = {
+                    anchor: { line: anchorLine.number, ch: sel.anchor - anchorLine.from },
+                    head: { line: headLine.number, ch: sel.head - headLine.from },
+                  };
+                  const nextKey = `${payload.anchor.line}:${payload.anchor.ch}-${payload.head.line}:${payload.head.ch}`;
+                  if (nextKey === lastCursorEmitKeyRef.current) return;
+                  lastCursorEmitKeyRef.current = nextKey;
+                  onCursorChangeRef.current?.(payload);
                 });
               }
             }),
@@ -653,6 +625,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
       initEditor();
 
       return () => {
+        if (cursorEmitRafRef.current !== null) {
+          cancelAnimationFrame(cursorEmitRafRef.current);
+          cursorEmitRafRef.current = null;
+        }
         if (viewRef.current) {
           viewRef.current.destroy();
           viewRef.current = null;
