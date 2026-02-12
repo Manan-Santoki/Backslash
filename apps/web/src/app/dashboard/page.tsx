@@ -44,6 +44,13 @@ interface SharedProject {
   lastBuildStatus: string | null;
 }
 
+interface Label {
+  id: string;
+  name: string;
+  createdAt: string;
+  userId : string;
+}
+
 type Template = "blank" | "article" | "thesis" | "beamer" | "letter";
 
 // ─── Helpers ────────────────────────────────────────
@@ -128,6 +135,7 @@ function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [template, setTemplate] = useState<Template>("blank");
+  const [labels, setLabels] = useState<Label[]>([]);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
@@ -258,6 +266,25 @@ function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogProps) {
               <option value="beamer">Beamer (Presentation)</option>
               <option value="letter">Letter</option>
             </select>
+          </div>
+
+          {/* Labels */}
+          <div>
+            <label
+              htmlFor="project-name"
+              className="mb-1.5 block text-sm font-medium text-text-secondary"
+            >
+              Project name
+            </label>
+            <input
+              id="project-name"
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              required
+              placeholder="My LaTeX Document"
+              className="w-full rounded-lg border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent"
+            />
           </div>
 
           {/* Actions */}
