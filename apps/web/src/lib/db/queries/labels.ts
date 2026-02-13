@@ -22,9 +22,9 @@ export async function findLabelsForFile(fileId: string) {
       userId: schema.labels.userId,
       createdAt: schema.labels.createdAt,
     })
-    .from(schema.fileLabels)
-    .innerJoin(schema.labels, eq(schema.fileLabels.labelId, schema.labels.id))
-    .where(eq(schema.fileLabels.fileId, fileId));
+    .from(schema.projectLabels)
+    .innerJoin(schema.labels, eq(schema.projectLabels.labelId, schema.labels.id))
+    .where(eq(schema.projectLabels.fileId, fileId));
 
   return rows;
 }
@@ -64,10 +64,10 @@ export async function deleteLabel(labelId: string) {
   return deleted || null;
 }
 
-// Attach label to file
-export async function attachLabelToFile(fileId: string, labelId: string) {
+// Attach label to project
+export async function attachLabelToProject(fileId: string, labelId: string) {
   const [row] = await db
-    .insert(schema.fileLabels)
+    .insert(schema.projectLabels)
     .values({
       fileId,
       labelId,
@@ -77,12 +77,12 @@ export async function attachLabelToFile(fileId: string, labelId: string) {
   return row;
 }
 
-// Detach label from file
-export async function detachLabelFromFile(fileId: string, labelId: string) {
+// Detach label from project
+export async function detachLabelFromProject(fileId: string, labelId: string) {
   const [deleted] = await db
-    .delete(schema.fileLabels)
+    .delete(schema.projectLabels)
     .where(
-      and(eq(schema.fileLabels.fileId, fileId), eq(schema.fileLabels.labelId, labelId))
+      and(eq(schema.projectLabels.fileId, fileId), eq(schema.projectLabels.labelId, labelId))
     )
     .returning();
 

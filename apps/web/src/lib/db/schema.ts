@@ -130,13 +130,13 @@ export const labels = pgTable(
   ]
 );
 
-//  ───  Project File Labels ──────────────────────────────────
-export const fileLabels = pgTable(
-  "file_labels",
+//  ───  Project Labels ──────────────────────────────────
+export const projectLabels = pgTable(
+  "project_labels",
   {
     id: uuid("id").defaultRandom().primaryKey(),
 
-    fileId: uuid("file_id")
+    fileId: uuid("priject_id")
       .notNull()
       .references(() => projectFiles.id, { onDelete: "cascade" }),
 
@@ -147,9 +147,9 @@ export const fileLabels = pgTable(
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
-    uniqueIndex("file_labels_unique_idx").on(table.fileId, table.labelId),
-    index("file_labels_file_idx").on(table.fileId),
-    index("file_labels_label_idx").on(table.labelId),
+    uniqueIndex("project_labels_unique_idx").on(table.fileId, table.labelId),
+    index("project_labels_file_idx").on(table.fileId),
+    index("project_labels_label_idx").on(table.labelId),
   ]
 );
 
@@ -273,6 +273,7 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   builds: many(builds),
   shares: many(projectShares),
   publicShare: many(projectPublicShares),
+  labels: many(projectLabels),
 }));
 
 export const projectFilesRelations = relations(projectFiles, ({ one, many }) => ({
@@ -280,7 +281,6 @@ export const projectFilesRelations = relations(projectFiles, ({ one, many }) => 
     fields: [projectFiles.projectId],
     references: [projects.id],
   }),
-  labels: many(fileLabels),
 }));
 
 export const buildsRelations = relations(builds, ({ one }) => ({
@@ -314,20 +314,20 @@ export const projectPublicSharesRelations = relations(
 );
 
 export const labelsRelations = relations(labels, ({ one, many }) => ({
-  fileLabels: many(fileLabels),
+  projectLabels: many(projectLabels),
   users : one(users, {
     fields: [labels.userId],
     references: [users.id],
   })
 }));
 
-export const fileLabelsRelations = relations(fileLabels, ({ one }) => ({
+export const projectLabelsRelations = relations(projectLabels, ({ one }) => ({
   file: one(projectFiles, {
-    fields: [fileLabels.fileId],
+    fields: [projectLabels.fileId],
     references: [projectFiles.id],
   }),
   label: one(labels, {
-    fields: [fileLabels.labelId],
+    fields: [projectLabels.labelId],
     references: [labels.id],
   }),
 }));
