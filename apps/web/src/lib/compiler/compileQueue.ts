@@ -15,7 +15,7 @@ export interface CompileJobData {
   mainFile: string;
 }
 
-export const COMPILE_QUEUE_NAME = "compile:jobs";
+export const COMPILE_QUEUE_NAME = "compile-jobs";
 export const COMPILE_CANCEL_KEY_PREFIX = "compile:cancel:";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";

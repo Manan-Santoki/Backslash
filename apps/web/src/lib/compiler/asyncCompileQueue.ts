@@ -9,7 +9,7 @@ export interface AsyncCompileJobData {
   mainFile: string;
 }
 
-export const ASYNC_COMPILE_QUEUE_NAME = "compile:async";
+export const ASYNC_COMPILE_QUEUE_NAME = "compile-async";
 export const ASYNC_COMPILE_CANCEL_KEY_PREFIX = "compile:async:cancel:";
 
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";

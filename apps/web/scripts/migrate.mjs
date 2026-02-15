@@ -213,8 +213,16 @@ async function repairPartialSchema(client) {
   console.log("[migrate] Partial schema repair complete");
 }
 
-/** Ensure build_status enum includes the "canceled" value. */
+/** Ensure build_status enum includes all runtime terminal statuses. */
 async function ensureBuildStatusEnum(client) {
+  await client.unsafe(`
+    DO $$ BEGIN
+      ALTER TYPE "build_status" ADD VALUE IF NOT EXISTS 'timeout';
+    EXCEPTION
+      WHEN undefined_object THEN NULL;
+    END $$;
+  `);
+
   await client.unsafe(`
     DO $$ BEGIN
       ALTER TYPE "build_status" ADD VALUE IF NOT EXISTS 'canceled';
