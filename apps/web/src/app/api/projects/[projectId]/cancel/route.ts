@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { and, desc, eq, inArray } from "drizzle-orm";
 
 import { db } from "@/lib/db";
+import {
+  ensureBuildStatusEnumCompat,
+  isBuildStatusEnumValueError,
+} from "@/lib/db/compat";
 import { builds, projects } from "@/lib/db/schema";
 import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { requestCompileCancel } from "@/lib/compiler/compileQueue";
@@ -60,16 +64,30 @@ export async function POST(
         ? Date.now() - build.createdAt.getTime()
         : 0;
 
-      await db
-        .update(builds)
-        .set({
-          status: "canceled",
-          logs: "Build canceled by user.",
-          durationMs,
-          exitCode: -1,
-          completedAt: new Date(),
-        })
-        .where(eq(builds.id, build.id));
+      const canceledPatch = {
+        status: "canceled" as const,
+        logs: "Build canceled by user.",
+        durationMs,
+        exitCode: -1,
+        completedAt: new Date(),
+      };
+
+      try {
+        await db
+          .update(builds)
+          .set(canceledPatch)
+          .where(eq(builds.id, build.id));
+      } catch (updateErr) {
+        if (isBuildStatusEnumValueError(updateErr)) {
+          await ensureBuildStatusEnumCompat();
+          await db
+            .update(builds)
+            .set(canceledPatch)
+            .where(eq(builds.id, build.id));
+        } else {
+          throw updateErr;
+        }
+      }
 
       await db
         .update(projects)

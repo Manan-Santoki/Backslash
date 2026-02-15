@@ -8,6 +8,10 @@ import path from "path";
 
 import { db } from "@/lib/db";
 import { builds } from "@/lib/db/schema";
+import {
+  ensureBuildStatusEnumCompat,
+  isBuildStatusEnumValueError,
+} from "@/lib/db/compat";
 import { getProjectDir, getPdfPath, fileExists } from "@/lib/storage";
 import { runCompileContainer } from "./docker";
 import { parseLatexLog } from "./logParser";
@@ -267,20 +271,34 @@ class CompileRunner {
       }
 
       // Step 4: Update database
-      await db
-        .update(builds)
-        .set({
-          engine: containerResult.engineUsed,
-          status: finalStatus,
-          logs: containerResult.canceled
-            ? "Build canceled by user."
-            : containerResult.logs,
-          durationMs,
-          exitCode: containerResult.exitCode,
-          pdfPath: pdfExists ? pdfOutputPath : null,
-          completedAt: new Date(),
-        })
-        .where(eq(builds.id, buildId));
+      const completionPatch = {
+        engine: containerResult.engineUsed,
+        status: finalStatus,
+        logs: containerResult.canceled
+          ? "Build canceled by user."
+          : containerResult.logs,
+        durationMs,
+        exitCode: containerResult.exitCode,
+        pdfPath: pdfExists ? pdfOutputPath : null,
+        completedAt: new Date(),
+      };
+
+      try {
+        await db
+          .update(builds)
+          .set(completionPatch)
+          .where(eq(builds.id, buildId));
+      } catch (updateErr) {
+        if (isBuildStatusEnumValueError(updateErr)) {
+          await ensureBuildStatusEnumCompat();
+          await db
+            .update(builds)
+            .set(completionPatch)
+            .where(eq(builds.id, buildId));
+        } else {
+          throw updateErr;
+        }
+      }
 
       // Step 5: Broadcast completion
       broadcastBuildUpdate(notifyUserId, {
@@ -424,15 +442,29 @@ class CompileRunner {
   ): Promise<void> {
     const notifyUserId = data.userId;
     const actorUserId = data.triggeredByUserId ?? null;
-    await db
-      .update(builds)
-      .set({
-        status: "canceled",
-        logs: message,
-        exitCode: -1,
-        completedAt: new Date(),
-      })
-      .where(eq(builds.id, data.buildId));
+    const canceledPatch = {
+      status: "canceled" as const,
+      logs: message,
+      exitCode: -1,
+      completedAt: new Date(),
+    };
+
+    try {
+      await db
+        .update(builds)
+        .set(canceledPatch)
+        .where(eq(builds.id, data.buildId));
+    } catch (updateErr) {
+      if (isBuildStatusEnumValueError(updateErr)) {
+        await ensureBuildStatusEnumCompat();
+        await db
+          .update(builds)
+          .set(canceledPatch)
+          .where(eq(builds.id, data.buildId));
+      } else {
+        throw updateErr;
+      }
+    }
 
     broadcastBuildUpdate(notifyUserId, {
       projectId: data.projectId,
