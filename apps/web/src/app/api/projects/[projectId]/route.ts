@@ -5,7 +5,7 @@ import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { updateProjectSchema } from "@/lib/utils/validation";
 import { checkProjectAccess } from "@/lib/db/queries/projects";
 import * as storage from "@/lib/storage";
-import { eq, and, desc } from "drizzle-orm";
+import { eq, desc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─── GET /api/projects/[projectId] ─────────────────

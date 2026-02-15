@@ -1,5 +1,7 @@
 import { db } from "@/lib/db";
 import { sessions, users } from "@/lib/db/schema";
+import { shouldUseSecureCookies } from "@/lib/auth/config";
+import { signSessionJwt, verifySessionJwt } from "@/lib/auth/jwt";
 import { eq, and, gt } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { cookies } from "next/headers";
@@ -10,20 +12,34 @@ const SESSION_EXPIRY_DAYS = parseInt(
 );
 
 export async function createSession(userId: string): Promise<string> {
-  const token = uuidv4();
+  const sessionId = uuidv4();
   const expiresAt = new Date();
   expiresAt.setDate(expiresAt.getDate() + SESSION_EXPIRY_DAYS);
 
   await db.insert(sessions).values({
     userId,
-    token,
+    token: sessionId,
     expiresAt,
   });
 
-  return token;
+  return signSessionJwt({
+    userId,
+    sessionId,
+    expiresAt,
+  });
 }
 
 export async function validateSession(token: string) {
+  const jwt = await verifySessionJwt(token);
+
+  const whereClause = jwt
+    ? and(
+      eq(sessions.token, jwt.sessionId),
+      eq(sessions.userId, jwt.userId),
+      gt(sessions.expiresAt, new Date())
+    )
+    : and(eq(sessions.token, token), gt(sessions.expiresAt, new Date()));
+
   const result = await db
     .select({
       session: sessions,
@@ -37,7 +53,7 @@ export async function validateSession(token: string) {
     })
     .from(sessions)
     .innerJoin(users, eq(sessions.userId, users.id))
-    .where(and(eq(sessions.token, token), gt(sessions.expiresAt, new Date())))
+    .where(whereClause)
     .limit(1);
 
   if (result.length === 0) return null;
@@ -45,7 +61,9 @@ export async function validateSession(token: string) {
 }
 
 export async function deleteSession(token: string) {
-  await db.delete(sessions).where(eq(sessions.token, token));
+  const jwt = await verifySessionJwt(token);
+  const sessionToken = jwt?.sessionId ?? token;
+  await db.delete(sessions).where(eq(sessions.token, sessionToken));
 }
 
 export async function deleteUserSessions(userId: string) {
@@ -58,13 +76,10 @@ export async function getSessionToken(): Promise<string | null> {
 }
 
 export async function setSessionCookie(token: string) {
-  const isSecure = process.env.SECURE_COOKIES === "true" ||
-    (process.env.NODE_ENV === "production" && process.env.SECURE_COOKIES !== "false");
-
   const cookieStore = await cookies();
   cookieStore.set("session", token, {
     httpOnly: true,
-    secure: isSecure,
+    secure: shouldUseSecureCookies(),
     sameSite: "lax",
     maxAge: SESSION_EXPIRY_DAYS * 24 * 60 * 60,
     path: "/",

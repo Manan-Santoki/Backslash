@@ -524,6 +524,8 @@ export function EditorLayout({
         resetCompileState();
       }
     }, 120_000);
+  // navigateToFirstError is defined later in this module.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     clearAllPolling,
     project.id,
@@ -887,7 +889,7 @@ export function EditorLayout({
         // Save failed silently
       }
     },
-    [activeFileId, project.id, saveViewPositionsBeforeBuild, startBuildPolling, withShareToken]
+    [activeFileId, canEdit, project.id, saveViewPositionsBeforeBuild, startBuildPolling, withShareToken]
   );
 
   const handleEditorChange = useCallback(
@@ -928,7 +930,7 @@ export function EditorLayout({
         handleSave(content, autoCompileEnabled);
       }, delay);
     },
-    [handleSave, activeFileId, autoCompileEnabled]
+    [handleSave, activeFileId, autoCompileEnabled, canEdit]
   );
 
   const handleImmediateSave = useCallback(() => {
@@ -969,6 +971,7 @@ export function EditorLayout({
       resetCompileState();
     }
   }, [
+    canEdit,
     project.id,
     resetCompileState,
     saveViewPositionsBeforeBuild,
@@ -1269,6 +1272,7 @@ export function EditorLayout({
                     {activeFileId ? (
                       isImageFile(activeFileId) ? (
                         <div className="flex h-full items-center justify-center bg-bg-primary p-4 overflow-auto">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
                           <img
                             src={withShareToken(
                               `/api/projects/${project.id}/files/${activeFileId}?raw`

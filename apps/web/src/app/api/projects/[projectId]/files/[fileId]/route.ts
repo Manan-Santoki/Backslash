@@ -8,10 +8,10 @@ import {
 } from "@/lib/utils/validation";
 import { broadcastBuildUpdate, broadcastFileEvent } from "@/lib/websocket/server";
 import * as storage from "@/lib/storage";
-import { eq, and, like } from "drizzle-orm";
+import { eq, and, like, or } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
-import { addCompileJob } from "@/lib/compiler/runner";
+import { enqueueCompileJob } from "@/lib/compiler/compileQueue";
 import { v4 as uuidv4 } from "uuid";
 
 // ─── GET /api/projects/[projectId]/files/[fileId] ──
@@ -172,7 +172,8 @@ export async function PUT(
     let buildQueued = false;
 
     const storageUserId = project.userId;
-    const actorUserId = access.user?.id ?? storageUserId;
+    const actorUserId = access.user?.id ?? null;
+    const buildUserId = access.user?.id ?? storageUserId;
 
     // If autoCompile is true, create a build record and enqueue compile job
     if (autoCompile) {
@@ -181,22 +182,22 @@ export async function PUT(
       await db.insert(builds).values({
         id: buildId,
         projectId,
-        userId: actorUserId,
+        userId: buildUserId,
         status: "queued",
         engine: project.engine,
       });
 
-      await addCompileJob({
+      await enqueueCompileJob({
         buildId,
         projectId,
-        userId: actorUserId,
+        userId: buildUserId,
         storageUserId,
         triggeredByUserId: actorUserId,
         engine: project.engine,
         mainFile: project.mainFile,
       });
 
-      broadcastBuildUpdate(actorUserId, {
+      broadcastBuildUpdate(buildUserId, {
         projectId,
         buildId,
         status: "queued",
@@ -210,7 +211,7 @@ export async function PUT(
     broadcastFileEvent({
       type: "file:saved",
       projectId,
-      userId: actorUserId,
+      userId: actorUserId ?? "anonymous",
       fileId,
       path: file.path,
     });
@@ -408,16 +409,32 @@ export async function DELETE(
       await storage.deleteFile(fullPath);
     }
 
-    // Delete from database
-    await db
-      .delete(projectFiles)
-      .where(eq(projectFiles.id, fileId));
+    // Delete from database.
+    // For directories, also delete all descendant rows.
+    if (file.isDirectory) {
+      const prefix = `${file.path}/%`;
+      await db
+        .delete(projectFiles)
+        .where(
+          and(
+            eq(projectFiles.projectId, projectId),
+            or(
+              eq(projectFiles.path, file.path),
+              like(projectFiles.path, prefix)
+            )
+          )
+        );
+    } else {
+      await db
+        .delete(projectFiles)
+        .where(eq(projectFiles.id, fileId));
+    }
 
     // Broadcast file deletion to collaborators
     broadcastFileEvent({
       type: "file:deleted",
       projectId,
-      userId: access.user?.id ?? project.userId,
+      userId: access.user?.id ?? "anonymous",
       fileId,
       path: file.path,
     });

@@ -129,13 +129,47 @@ export interface ApiKeyListResponse {
 export interface V1CompileRequest {
   /** Raw LaTeX source code to compile */
   source: string;
-  /** LaTeX engine to use (default: pdflatex) */
+  /** LaTeX engine to use (default: auto-detect) */
   engine?: Engine;
 }
 
+export interface V1CompileSubmitResponse {
+  jobId: string;
+  status: "queued";
+  message: string;
+  pollUrl: string;
+  outputUrl: string;
+  cancelUrl: string;
+}
+
+export interface V1CompileStatusResponse {
+  job: {
+    id: string;
+    status: Build["status"];
+    requestedEngine: Engine;
+    engineUsed: Exclude<Engine, "auto"> | null;
+    warningCount: number;
+    errorCount: number;
+    durationMs: number | null;
+    exitCode: number | null;
+    message: string | null;
+    createdAt: string;
+    startedAt: string | null;
+    completedAt: string | null;
+    expiresAt: string | null;
+  };
+  links: {
+    output: string;
+    pdf: string | null;
+  };
+}
+
+/** Response from GET /api/v1/compile/:jobId/output?format=json|base64 */
 export interface V1CompileResponse {
   /** Base64-encoded PDF */
   pdf: string;
+  /** Actual engine used by the compiler */
+  engineUsed: Exclude<Engine, "auto">;
   logs: string;
   errors: ParsedLogEntry[];
   durationMs: number;

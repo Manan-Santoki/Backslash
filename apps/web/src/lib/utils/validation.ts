@@ -55,7 +55,7 @@ export const createProjectSchema = z.object({
     .min(1, "Project name is required")
     .max(255, "Project name is too long"),
   description: z.string().max(1000).optional(),
-  engine: z.enum(["pdflatex", "xelatex", "lualatex", "latex"]).optional(),
+  engine: z.enum(["auto", "pdflatex", "xelatex", "lualatex", "latex"]).optional(),
   template: z
     .enum(["blank", "article", "thesis", "beamer", "letter"])
     .optional(),
@@ -64,7 +64,7 @@ export const createProjectSchema = z.object({
 export const updateProjectSchema = z.object({
   name: z.string().min(1).max(255).optional(),
   description: z.string().max(1000).optional(),
-  engine: z.enum(["pdflatex", "xelatex", "lualatex", "latex"]).optional(),
+  engine: z.enum(["auto", "pdflatex", "xelatex", "lualatex", "latex"]).optional(),
   mainFile: z.string().max(500).optional(),
 });
 

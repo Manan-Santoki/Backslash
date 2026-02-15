@@ -45,6 +45,7 @@ interface SharedProject {
 }
 
 type Template = "blank" | "article" | "thesis" | "beamer" | "letter";
+type EngineOption = "auto" | "pdflatex" | "xelatex" | "lualatex" | "latex";
 
 // ─── Helpers ────────────────────────────────────────
 
@@ -128,6 +129,7 @@ function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [template, setTemplate] = useState<Template>("blank");
+  const [engine, setEngine] = useState<EngineOption>("auto");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
 
@@ -135,6 +137,7 @@ function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogProps) {
     setName("");
     setDescription("");
     setTemplate("blank");
+    setEngine("auto");
     setError("");
   }
 
@@ -147,7 +150,7 @@ function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogProps) {
       const res = await fetch("/api/projects", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description, template }),
+        body: JSON.stringify({ name, description, template, engine }),
       });
 
       if (!res.ok) {
@@ -257,6 +260,28 @@ function NewProjectDialog({ open, onClose, onCreated }: NewProjectDialogProps) {
               <option value="thesis">Thesis</option>
               <option value="beamer">Beamer (Presentation)</option>
               <option value="letter">Letter</option>
+            </select>
+          </div>
+
+          {/* Engine */}
+          <div>
+            <label
+              htmlFor="project-engine"
+              className="mb-1.5 block text-sm font-medium text-text-secondary"
+            >
+              Engine
+            </label>
+            <select
+              id="project-engine"
+              value={engine}
+              onChange={(e) => setEngine(e.target.value as EngineOption)}
+              className="w-full rounded-lg border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent"
+            >
+              <option value="auto">Auto-detect</option>
+              <option value="pdflatex">pdfLaTeX</option>
+              <option value="xelatex">XeLaTeX</option>
+              <option value="lualatex">LuaLaTeX</option>
+              <option value="latex">LaTeX (DVI)</option>
             </select>
           </div>
 

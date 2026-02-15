@@ -16,6 +16,7 @@ import { relations } from "drizzle-orm";
 // ─── Enums ──────────────────────────────────────────
 
 export const engineEnum = pgEnum("engine", [
+  "auto",
   "pdflatex",
   "xelatex",
   "lualatex",
@@ -81,7 +82,7 @@ export const projects = pgTable(
       .references(() => users.id, { onDelete: "cascade" }),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description").default(""),
-    engine: engineEnum("engine").default("pdflatex").notNull(),
+    engine: engineEnum("engine").default("auto").notNull(),
     mainFile: varchar("main_file", { length: 500 })
       .default("main.tex")
       .notNull(),

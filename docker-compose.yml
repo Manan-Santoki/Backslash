@@ -17,6 +17,7 @@ services:
   # postgres will sit idle using minimal resources.
   postgres:
     image: postgres:16-alpine
+    hostname: backslash-postgres
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-backslash}
       POSTGRES_USER: ${POSTGRES_USER:-backslash}
@@ -32,23 +33,6 @@ services:
       - backslash
     restart: unless-stopped
 
-  # ── Database Migrations ─────────────────────────────
-  # Runs pending Drizzle migrations using the same production image,
-  # then exits. The app service waits for this to complete.
-  migrate:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    command: ["node", "apps/web/scripts/migrate.mjs"]
-    environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@postgres:5432/backslash}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - backslash
-    restart: "no"
-
   # ── Web Application ────────────────────────────────
   app:
     build:
@@ -57,8 +41,10 @@ services:
     environment:
       - HOSTNAME=0.0.0.0
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@postgres:5432/backslash}
-      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@backslash-postgres:5432/backslash}
+      - MIGRATE_MAX_ATTEMPTS=${MIGRATE_MAX_ATTEMPTS:-30}
+      - MIGRATE_RETRY_DELAY_SECONDS=${MIGRATE_RETRY_DELAY_SECONDS:-2}
+      - REDIS_URL=redis://backslash-redis:6379
       - STORAGE_PATH=/data/backslash
       - TEMPLATES_PATH=/app/templates
       - COMPILER_IMAGE=backslash-compiler
@@ -66,6 +52,12 @@ services:
       - COMPILE_CPUS=${COMPILE_CPUS:-1.5}
       - MAX_CONCURRENT_BUILDS=${MAX_CONCURRENT_BUILDS:-5}
       - COMPILE_TIMEOUT=${COMPILE_TIMEOUT:-120}
+      - STALE_BUILD_TTL_MINUTES=${STALE_BUILD_TTL_MINUTES:-60}
+      - RUN_COMPILE_RUNNER_IN_WEB=${RUN_COMPILE_RUNNER_IN_WEB:-false}
+      - WORKER_HEARTBEAT_KEY=${WORKER_HEARTBEAT_KEY:-compile:worker:heartbeat}
+      - WORKER_HEARTBEAT_MAX_AGE_MS=${WORKER_HEARTBEAT_MAX_AGE_MS:-30000}
+      - ASYNC_COMPILE_RESULT_TTL_MINUTES=${ASYNC_COMPILE_RESULT_TTL_MINUTES:-60}
+      - ASYNC_COMPILE_MAX_CONCURRENT_BUILDS=${ASYNC_COMPILE_MAX_CONCURRENT_BUILDS:-5}
       - SESSION_SECRET=${SESSION_SECRET:-change-me-to-a-random-64-char-string}
       - DISABLE_SIGNUP=${DISABLE_SIGNUP:-false}
       - SECURE_COOKIES=${SECURE_COOKIES:-false}
@@ -77,7 +69,42 @@ services:
     depends_on:
       compiler-image:
         condition: service_completed_successfully
-      migrate:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - backslash
+    restart: unless-stopped
+
+  # ── Dedicated Compilation Worker ───────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: apps/worker/Dockerfile
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@backslash-postgres:5432/backslash}
+      - MIGRATE_MAX_ATTEMPTS=${MIGRATE_MAX_ATTEMPTS:-30}
+      - MIGRATE_RETRY_DELAY_SECONDS=${MIGRATE_RETRY_DELAY_SECONDS:-2}
+      - REDIS_URL=redis://backslash-redis:6379
+      - STORAGE_PATH=/data/backslash
+      - COMPILER_IMAGE=backslash-compiler
+      - COMPILE_MEMORY=${COMPILE_MEMORY:-1g}
+      - COMPILE_CPUS=${COMPILE_CPUS:-1.5}
+      - MAX_CONCURRENT_BUILDS=${MAX_CONCURRENT_BUILDS:-5}
+      - COMPILE_TIMEOUT=${COMPILE_TIMEOUT:-120}
+      - STALE_BUILD_TTL_MINUTES=${STALE_BUILD_TTL_MINUTES:-60}
+      - PROJECTS_VOLUME=backslash-project-data
+      - WORKER_HEARTBEAT_KEY=${WORKER_HEARTBEAT_KEY:-compile:worker:heartbeat}
+      - WORKER_HEARTBEAT_INTERVAL_MS=${WORKER_HEARTBEAT_INTERVAL_MS:-5000}
+      - ASYNC_COMPILE_RESULT_TTL_MINUTES=${ASYNC_COMPILE_RESULT_TTL_MINUTES:-60}
+      - ASYNC_COMPILE_MAX_CONCURRENT_BUILDS=${ASYNC_COMPILE_MAX_CONCURRENT_BUILDS:-5}
+    volumes:
+      - project-data:/data/backslash
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      compiler-image:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -96,13 +123,13 @@ services:
       dockerfile: apps/ws/Dockerfile
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@postgres:5432/backslash}
-      - REDIS_URL=redis://redis:6379
+      - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@backslash-postgres:5432/backslash}
+      - REDIS_URL=redis://backslash-redis:6379
       - WS_PORT=3001
+      - WS_PATH_PREFIX=${WS_PATH_PREFIX:-}
+      - SESSION_SECRET=${SESSION_SECRET:-change-me-to-a-random-64-char-string}
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
     depends_on:
-      migrate:
-        condition: service_completed_successfully
       redis:
         condition: service_healthy
       postgres:
@@ -114,6 +141,7 @@ services:
   # ── Redis ──────────────────────────────────────────
   redis:
     image: redis:7-alpine
+    hostname: backslash-redis
     command: redis-server --appendonly yes --maxmemory-policy noeviction
     volumes:
       - redis-data:/data

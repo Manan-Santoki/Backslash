@@ -1,4 +1,4 @@
-export type Engine = "pdflatex" | "xelatex" | "lualatex" | "latex";
+export type Engine = "auto" | "pdflatex" | "xelatex" | "lualatex" | "latex";
 
 export type BuildStatus =
   | "queued"

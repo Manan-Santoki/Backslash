@@ -1,8 +1,8 @@
 import type { Engine, TemplateName } from "./types/project";
 
-export const ENGINES: Engine[] = ["pdflatex", "xelatex", "lualatex", "latex"];
+export const ENGINES: Engine[] = ["auto", "pdflatex", "xelatex", "lualatex", "latex"];
 
-export const ENGINE_FLAGS: Record<Engine, string> = {
+export const ENGINE_FLAGS: Record<Exclude<Engine, "auto">, string> = {
   latex: "-pdfdvi",
   pdflatex: "-pdf",
   xelatex: "-xelatex",

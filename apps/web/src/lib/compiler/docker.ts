@@ -43,6 +43,7 @@ const PROJECTS_VOLUME = process.env.PROJECTS_VOLUME || "backslash-project-data";
 export interface CompileContainerOptions {
   projectDir: string;
   mainFile: string;
+  engine?: Engine;
   signal?: AbortSignal;
 }
 
@@ -51,6 +52,7 @@ export interface CompileContainerResult {
   logs: string;
   timedOut: boolean;
   canceled: boolean;
+  engineUsed: Exclude<Engine, "auto">;
 }
 
 // ─── Helpers ───────────────────────────────────────
@@ -161,7 +163,10 @@ async function fetchContainerLogs(container: Docker.Container): Promise<string> 
  * - fontspec / unicode-math / polyglossia → xelatex
  * - everything else → pdflatex
  */
-export async function detectEngine(projectDir: string, mainFile: string): Promise<Engine> {
+export async function detectEngine(
+  projectDir: string,
+  mainFile: string
+): Promise<Exclude<Engine, "auto">> {
   try {
     const filePath = path.join(projectDir, mainFile);
     const content = await readFile(filePath, "utf-8");
@@ -183,7 +188,8 @@ export async function detectEngine(projectDir: string, mainFile: string): Promis
 /**
  * Runs a LaTeX compilation in an isolated, ephemeral Docker container.
  *
- * The engine is auto-detected from the main .tex file source.
+ * If an engine is provided, it is used as-is.
+ * Otherwise, the engine is auto-detected from the main .tex source.
  *
  * Each build gets its own container with full sandboxing:
  * - NetworkDisabled: no network access
@@ -200,11 +206,13 @@ export async function runCompileContainer(
   options: CompileContainerOptions
 ): Promise<CompileContainerResult> {
   const docker = getDockerClient();
-  const { projectDir, mainFile, signal } = options;
+  const { projectDir, mainFile, engine: requestedEngine, signal } = options;
 
   console.log(`[Docker] Starting compilation: dir=${projectDir} file=${mainFile}`);
 
-  const engine = await detectEngine(projectDir, mainFile);
+  const engine: Exclude<Engine, "auto"> = requestedEngine && requestedEngine !== "auto"
+    ? requestedEngine
+    : await detectEngine(projectDir, mainFile);
   const engineFlag = ENGINE_FLAGS[engine];
   const memoryBytes = parseMemoryString(COMPILE_MEMORY);
   const nanoCpus = Math.floor(COMPILE_CPUS * 1e9);
@@ -229,7 +237,13 @@ export async function runCompileContainer(
 
   try {
     if (signal?.aborted) {
-      throw new Error("Build canceled");
+      return {
+        exitCode: -1,
+        logs: "Build canceled by user.",
+        timedOut: false,
+        canceled: true,
+        engineUsed: engine,
+      };
     }
 
     console.log(`[Docker] Creating container with WorkingDir=${projectDir}, cmd=${cmd.join(" ")}`);
@@ -241,7 +255,7 @@ export async function runCompileContainer(
       HostConfig: {
         Mounts: [
           {
-            Type: "volume" as "volume",
+            Type: "volume" as const,
             Source: PROJECTS_VOLUME,
             Target: STORAGE_PATH,
             ReadOnly: false,
@@ -338,6 +352,7 @@ export async function runCompileContainer(
     logs,
     timedOut,
     canceled,
+    engineUsed: engine,
   };
 }
 

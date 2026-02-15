@@ -261,41 +261,35 @@ function getSections(origin: string): EndpointSection[] {
     title: "One-Shot Compilation",
     icon: <Zap className="h-5 w-5" />,
     description:
-      "Upload a .tex file (or send LaTeX source as JSON) and get back a compiled PDF. No project needed.",
+      "Async compile API for raw LaTeX input. Submit a job, poll status, then fetch output.",
     endpoints: [
       {
         method: "POST",
         path: `${BASE}/compile`,
         description:
-          "Compile LaTeX to PDF. Accepts a .tex file upload (multipart/form-data) or JSON body. Returns raw PDF by default.",
+          "Submit an async one-shot compile job. Accepts multipart/form-data or JSON body.",
         auth: true,
         body: {
           file: {
             type: "file (.tex)",
             required: false,
             description:
-              "A .tex file to compile (multipart/form-data). Use this OR the JSON 'source' field.",
+              "A .tex file to compile (multipart/form-data). Use this OR JSON 'source'.",
           },
           source: {
             type: "string",
             required: false,
             description:
-              "LaTeX source code as a string (JSON body). Use this OR the 'file' field. Max 5 MB.",
+              "LaTeX source as a string (JSON body). Use this OR multipart 'file'. Max 5 MB.",
           },
           engine: {
             type: "string",
             required: false,
             description:
-              'Compilation engine: "pdflatex", "xelatex", "lualatex". Default: "pdflatex". Also accepted as a query param.',
-          },
+              'Engine: "auto", "pdflatex", "xelatex", "lualatex", "latex". Default: "auto".',
+            },
         },
         query: {
-          format: {
-            type: "string",
-            required: false,
-            description:
-              '"pdf" (default) — raw binary PDF. "base64" or "json" — JSON with base64 pdf, logs, errors, durationMs.',
-          },
           engine: {
             type: "string",
             required: false,
@@ -303,38 +297,115 @@ function getSections(origin: string): EndpointSection[] {
               'Override engine via query param. Same options as body field.',
           },
         },
-        response: `# Default (?format=pdf): raw application/pdf binary
-# Response headers include:
-#   X-Compile-Duration-Ms, X-Compile-Warnings, X-Compile-Errors
-
-# With ?format=base64 or ?format=json:
-{
-  "pdf": "JVBERi0xLjQK... (base64)",
-  "logs": "This is pdfTeX, Version 3.14...",
-  "errors": [],
-  "durationMs": 3200
+        response: `{
+  "jobId": "uuid",
+  "status": "queued",
+  "message": "Compilation queued",
+  "pollUrl": "/api/v1/compile/uuid",
+  "outputUrl": "/api/v1/compile/uuid/output",
+  "cancelUrl": "/api/v1/compile/uuid/cancel"
 }`,
-        curl: `# Upload a .tex file → get raw PDF back
+        curl: `# Submit compile job
 curl -X POST ${BASE}/compile \\
   -H "Authorization: Bearer bs_YOUR_API_KEY" \\
   -F "file=@document.tex" \\
-  -F "engine=pdflatex" \\
-  --output output.pdf
+  -F "engine=auto"
 
-# Upload a .tex file → get base64 JSON response
-curl -X POST "${BASE}/compile?format=base64" \\
-  -H "Authorization: Bearer bs_YOUR_API_KEY" \\
-  -F "file=@document.tex"
-
-# JSON body (still supported)
+# JSON body also supported
 curl -X POST ${BASE}/compile \\
   -H "Authorization: Bearer bs_YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"source": "\\\\documentclass{article}\\n\\\\begin{document}\\nHello!\\n\\\\end{document}"}' \\
-  --output output.pdf`,
+  -d '{"source": "\\\\documentclass{article}\\n\\\\begin{document}\\nHello!\\n\\\\end{document}"}'`,
         notes:
-          "Tip: Use file upload for real documents — no need to escape backslashes. The default response is a raw PDF blob you can pipe straight to a file.",
+          "This endpoint is asynchronous by design. Use the returned job URLs to poll and fetch output.",
       },
+      {
+        method: "GET",
+        path: `${BASE}/compile/:jobId`,
+        description:
+          "Get compile job status, summary counters, and output links.",
+        auth: true,
+        response: `{
+  "job": {
+    "id": "uuid",
+    "status": "compiling",
+    "requestedEngine": "auto",
+    "engineUsed": null,
+    "warningCount": 0,
+    "errorCount": 0,
+    "durationMs": null,
+    "exitCode": null,
+    "message": null,
+    "createdAt": "2026-01-01T00:00:00Z",
+    "startedAt": "2026-01-01T00:00:01Z",
+    "completedAt": null,
+    "expiresAt": null
+  },
+  "links": {
+    "output": "/api/v1/compile/uuid/output",
+    "pdf": null
+  }
+}`,
+        curl: `curl ${BASE}/compile/JOB_ID \\
+  -H "Authorization: Bearer bs_YOUR_API_KEY"`,
+      },
+      {
+        method: "GET",
+        path: `${BASE}/compile/:jobId/output`,
+        description:
+          "Fetch compile output after completion. Supports JSON/base64 or raw PDF.",
+        auth: true,
+        query: {
+          format: {
+            type: "string",
+            required: false,
+            description:
+              '"json" (default) or "base64" returns JSON with base64 PDF + logs/errors. "pdf" returns binary application/pdf.',
+          },
+        },
+        response: `# Success (format=json or base64):
+{
+  "pdf": "JVBERi0xLjQK... (base64)",
+  "engineUsed": "pdflatex",
+  "logs": "This is pdfTeX, Version 3.14...",
+  "errors": [],
+  "durationMs": 3200
+}
+
+# Error / timeout / canceled:
+{
+  "error": "Compilation failed",
+  "status": "error",
+  "engineUsed": "pdflatex",
+  "logs": "...",
+  "errors": [ ... ],
+  "durationMs": 1200
+}`,
+        curl: `# JSON output
+curl "${BASE}/compile/JOB_ID/output?format=json" \\
+  -H "Authorization: Bearer bs_YOUR_API_KEY" \\
+  -o output.json
+
+# Raw PDF
+curl "${BASE}/compile/JOB_ID/output?format=pdf" \\
+  -H "Authorization: Bearer bs_YOUR_API_KEY" \\
+  --output output.pdf`,
+      },
+      {
+        method: "POST",
+        path: `${BASE}/compile/:jobId/cancel`,
+        description:
+          "Cancel an in-progress async compile job.",
+        auth: true,
+        response: `{
+  "jobId": "uuid",
+  "status": "canceled",
+  "message": "Cancel request accepted"
+}`,
+        curl: `curl -X POST ${BASE}/compile/JOB_ID/cancel \\
+  -H "Authorization: Bearer bs_YOUR_API_KEY"`,
+      },
+
     ],
   },
   {
@@ -353,7 +424,7 @@ curl -X POST ${BASE}/compile \\
       "id": "uuid",
       "name": "My Paper",
       "description": "A research paper",
-      "engine": "pdflatex",
+      "engine": "auto",
       "mainFile": "main.tex",
       "lastBuildStatus": "success",
       "createdAt": "2025-01-01T00:00:00Z",
@@ -386,12 +457,18 @@ curl -X POST ${BASE}/compile \\
             description:
               'Template: "blank", "article", "thesis", "beamer", "letter". Default: "blank".',
           },
+          engine: {
+            type: "string",
+            required: false,
+            description:
+              'Project default engine: "auto", "pdflatex", "xelatex", "lualatex", or "latex". Default: "auto".',
+          },
         },
         response: `{
   "project": {
     "id": "uuid",
     "name": "My Paper",
-    "engine": "pdflatex",
+    "engine": "auto",
     "mainFile": "main.tex",
     "createdAt": "2025-01-01T00:00:00Z"
   }
@@ -434,7 +511,7 @@ curl -X POST ${BASE}/compile \\
             type: "string",
             required: false,
             description:
-              '"pdflatex", "xelatex", or "lualatex".',
+              '"auto", "pdflatex", "xelatex", "lualatex", or "latex".',
           },
           mainFile: {
             type: "string",
@@ -587,29 +664,25 @@ curl -X POST ${BASE}/compile \\
         method: "POST",
         path: `${BASE}/projects/:projectId/compile`,
         description:
-          "Queue a compilation of the project. Returns the build record.",
+          "Queue a compilation of the project. Returns the queued build id.",
         auth: true,
         body: {
           engine: {
             type: "string",
             required: false,
             description:
-              'Override engine for this build. Default: project engine.',
+              'Optional one-time engine override for this build. Does not change the project default engine.',
           },
         },
         response: `{
-  "build": {
-    "id": "uuid",
-    "status": "queued",
-    "engine": "pdflatex",
-    "createdAt": "2025-01-01T00:00:00Z"
-  },
+  "buildId": "uuid",
+  "status": "queued",
   "message": "Compilation queued"
 }`,
         curl: `curl -X POST ${BASE}/projects/PROJECT_ID/compile \\
   -H "Authorization: Bearer bs_YOUR_API_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{}'`,
+  -d '{"engine": "auto"}'`,
       },
     ],
   },

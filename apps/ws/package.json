@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "ioredis": "^5.4.0",
+    "jose": "^5.10.0",
     "postgres": "^3.4.0",
     "socket.io": "^4.8.0",
     "cors": "^2.8.5"

@@ -49,12 +49,11 @@ export interface CodeEditorHandle {
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
   function CodeEditor(
-    {
-      content,
-      onChange,
-      language = "latex",
-      readOnly = false,
-      errors,
+      {
+        content,
+        onChange,
+        readOnly = false,
+        errors,
       onDocChange,
       onCursorChange,
       remoteChanges,
@@ -273,6 +272,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
           highlightSpecialChars,
           Decoration,
           ViewPlugin,
+          WidgetType,
           MatchDecorator,
         } = await import("@codemirror/view");
         const {
@@ -297,6 +297,44 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
 
         // ─── Remote cursor infrastructure ───────────────
         type CursorMap = Map<string, RemoteCursorData>;
+
+        class CursorLabelWidget extends WidgetType {
+          constructor(readonly name: string, readonly color: string) {
+            super();
+          }
+          toDOM() {
+            const el = document.createElement("span");
+            el.className = "cm-remote-cursor-label";
+            el.textContent = this.name;
+            el.style.cssText = `
+              background: ${this.color};
+              color: #fff;
+              font-size: 10px;
+              font-weight: 600;
+              line-height: 1;
+              padding: 1px 4px;
+              border-radius: 3px 3px 3px 0;
+              position: absolute;
+              top: -18px;
+              left: -1px;
+              white-space: nowrap;
+              pointer-events: none;
+              z-index: 10;
+              font-family: var(--font-sans, sans-serif);
+              box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+            `;
+            const wrapper = document.createElement("span");
+            wrapper.style.cssText = "position: relative; display: inline; width: 0; overflow: visible;";
+            wrapper.appendChild(el);
+            return wrapper;
+          }
+          eq(other: CursorLabelWidget) {
+            return this.name === other.name && this.color === other.color;
+          }
+          ignoreEvent() {
+            return true;
+          }
+        }
 
         const setCursorsEffect = StateEffect.define<CursorMap>();
         remoteCursorEffectRef.current = setCursorsEffect;
@@ -399,6 +437,16 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
                           "data-remote-user": name,
                           style: caretStyle,
                         },
+                      }),
+                    });
+
+                    // Name label widget above the caret
+                    decos.push({
+                      from: caretTo,
+                      to: caretTo,
+                      deco: Decoration.widget({
+                        widget: new CursorLabelWidget(name, color),
+                        side: 1,
                       }),
                     });
                   }

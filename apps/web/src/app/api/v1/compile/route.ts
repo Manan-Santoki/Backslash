@@ -1,25 +1,28 @@
 import { withApiKey } from "@/lib/auth/apikey";
-import { runCompileContainer } from "@/lib/compiler/docker";
-import { parseLatexLog } from "@/lib/compiler/logParser";
+import { enqueueAsyncCompileJob } from "@/lib/compiler/asyncCompileQueue";
+import {
+  createAsyncCompileJob,
+  deleteAsyncCompileJob,
+} from "@/lib/compiler/asyncCompileStore";
+import {
+  isDedicatedWorkerHealthy,
+  isWorkerExpectedInWeb,
+} from "@/lib/compiler/workerHealth";
 import { NextRequest, NextResponse } from "next/server";
-import path from "path";
-import fs from "fs/promises";
 import { v4 as uuidv4 } from "uuid";
 
 // ─── POST /api/v1/compile ───────────────────────────
-// One-shot compile: send a .tex file (or JSON source), receive PDF.
+// One-shot compile: enqueue source and poll for async result.
 //
 // Accepts:
 //   1. multipart/form-data  — file field "file" (.tex), optional "engine" field
-//   2. application/json     — { "source": "...", "engine": "pdflatex" }
+//   2. application/json     — { "source": "...", "engine": "auto|pdflatex|xelatex|lualatex|latex" }
 //
-// Response formats (controlled by ?format= query param):
-//   ?format=pdf    (default) — raw application/pdf binary blob
-//   ?format=base64           — JSON { pdf, logs, errors, durationMs }
-//   ?format=json             — same as base64
+// Response:
+//   202 Accepted with job id and poll links.
 
 const MAX_SOURCE_SIZE = 5 * 1024 * 1024; // 5 MB
-const VALID_ENGINES = ["pdflatex", "xelatex", "lualatex", "latex"] as const;
+const VALID_ENGINES = ["auto", "pdflatex", "xelatex", "lualatex", "latex"] as const;
 type Engine = (typeof VALID_ENGINES)[number];
 
 function isValidEngine(v: string): v is Engine {
@@ -31,7 +34,7 @@ export async function POST(request: NextRequest) {
     try {
       // ── Parse input (multipart OR JSON) ────────────
       let source: string;
-      let engine: Engine = "pdflatex";
+      let engine: Engine = "auto";
       const contentType = req.headers.get("content-type") || "";
 
       if (contentType.includes("multipart/form-data")) {
@@ -56,7 +59,16 @@ export async function POST(request: NextRequest) {
         source = await file.text();
 
         const engineField = formData.get("engine");
-        if (engineField && typeof engineField === "string" && isValidEngine(engineField)) {
+        if (engineField && typeof engineField === "string") {
+          if (!isValidEngine(engineField)) {
+            return NextResponse.json(
+              {
+                error:
+                  "Invalid engine. Use one of: auto, pdflatex, xelatex, lualatex, latex",
+              },
+              { status: 400 }
+            );
+          }
           engine = engineField;
         }
       } else {
@@ -89,92 +101,90 @@ export async function POST(request: NextRequest) {
 
         source = src;
 
-        if (typeof eng === "string" && isValidEngine(eng)) {
+        if (typeof eng === "string") {
+          if (!isValidEngine(eng)) {
+            return NextResponse.json(
+              {
+                error:
+                  "Invalid engine. Use one of: auto, pdflatex, xelatex, lualatex, latex",
+              },
+              { status: 400 }
+            );
+          }
           engine = eng;
         }
       }
 
       // Allow engine override via query param too
       const qEngine = req.nextUrl.searchParams.get("engine");
-      if (qEngine && isValidEngine(qEngine)) {
+      if (qEngine) {
+        if (!isValidEngine(qEngine)) {
+          return NextResponse.json(
+            {
+              error:
+                "Invalid engine. Use one of: auto, pdflatex, xelatex, lualatex, latex",
+            },
+            { status: 400 }
+          );
+        }
         engine = qEngine;
       }
 
-      // ── Determine response format ─────────────────
-      const format = req.nextUrl.searchParams.get("format") || "pdf";
+      const legacyFormat = req.nextUrl.searchParams.get("format");
+      if (legacyFormat) {
+        return NextResponse.json(
+          {
+            error:
+              "POST /api/v1/compile is asynchronous. Submit first, then use GET /api/v1/compile/:jobId/output?format=pdf|base64|json",
+          },
+          { status: 400 }
+        );
+      }
 
-      // ── Compile ───────────────────────────────────
-      const jobId = uuidv4();
-      const STORAGE_PATH = process.env.STORAGE_PATH || "/data";
-      const tmpDir = path.join(STORAGE_PATH, "tmp", jobId);
-      await fs.mkdir(tmpDir, { recursive: true });
-
-      try {
-        await fs.writeFile(path.join(tmpDir, "main.tex"), source, "utf-8");
-
-        const startTime = Date.now();
-
-        const result = await runCompileContainer({
-          projectDir: tmpDir,
-          mainFile: "main.tex",
-        });
-
-        const durationMs = Date.now() - startTime;
-        const errors = parseLatexLog(result.logs);
-
-        // Try to read the generated PDF
-        const pdfPath = path.join(tmpDir, "main.pdf");
-        let pdfBuffer: Buffer | null = null;
-
-        try {
-          pdfBuffer = await fs.readFile(pdfPath);
-        } catch {
-          // PDF was not generated
-        }
-
-        if (!pdfBuffer || result.timedOut) {
+      if (!isWorkerExpectedInWeb()) {
+        const workerHealthy = await isDedicatedWorkerHealthy();
+        if (!workerHealthy) {
           return NextResponse.json(
-            {
-              error: result.timedOut
-                ? "Compilation timed out"
-                : "Compilation failed — no PDF generated",
-              logs: result.logs,
-              errors: errors.filter((e) => e.type === "error"),
-              durationMs,
-            },
-            { status: 422 }
+            { error: "Compilation worker unavailable — try again shortly" },
+            { status: 503 }
           );
         }
-
-        // ── Return PDF in the requested format ──────
-        if (format === "base64" || format === "json") {
-          return NextResponse.json({
-            pdf: pdfBuffer.toString("base64"),
-            logs: result.logs,
-            errors,
-            durationMs,
-          });
-        }
-
-        // Default: raw PDF binary
-        return new NextResponse(new Uint8Array(pdfBuffer), {
-          status: 200,
-          headers: {
-            "Content-Type": "application/pdf",
-            "Content-Disposition": 'inline; filename="output.pdf"',
-            "Content-Length": String(pdfBuffer.length),
-            "X-Compile-Duration-Ms": String(durationMs),
-            "X-Compile-Warnings": String(
-              errors.filter((e) => e.type === "warning").length
-            ),
-            "X-Compile-Errors": String(
-              errors.filter((e) => e.type === "error").length
-            ),
-          },
-        });
-      } finally {
-        await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
       }
+
+      // ── Enqueue async job ─────────────────────────
+      const jobId = uuidv4();
+
+      await createAsyncCompileJob({
+        jobId,
+        userId: user.id,
+        source,
+        requestedEngine: engine,
+        mainFile: "main.tex",
+      });
+
+      try {
+        await enqueueAsyncCompileJob({
+          jobId,
+          userId: user.id,
+          engine,
+          mainFile: "main.tex",
+        });
+      } catch (enqueueError) {
+        await deleteAsyncCompileJob(jobId).catch(() => {});
+        throw enqueueError;
+      }
+
+      return NextResponse.json(
+        {
+          jobId,
+          status: "queued",
+          message: "Compilation queued",
+          pollUrl: `/api/v1/compile/${jobId}`,
+          outputUrl: `/api/v1/compile/${jobId}/output`,
+          cancelUrl: `/api/v1/compile/${jobId}/cancel`,
+        },
+        { status: 202 }
+      );
     } catch (error) {
       console.error("[API v1] Compile error:", error);
       return NextResponse.json(

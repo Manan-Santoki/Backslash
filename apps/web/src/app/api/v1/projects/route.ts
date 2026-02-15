@@ -79,7 +79,7 @@ export async function POST(request: NextRequest) {
           userId: user.id,
           name,
           description: description ?? "",
-          engine: engine ?? "pdflatex",
+          engine: engine ?? "auto",
           mainFile: "main.tex",
         })
         .returning();

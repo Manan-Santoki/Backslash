@@ -1,4 +1,4 @@
-import type { ParsedLogEntry, BuildStatus } from "@backslash/shared";
+import type { ParsedLogEntry } from "@backslash/shared";
 
 // ─── Re-export shared event types ──────────────────
 

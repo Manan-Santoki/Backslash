@@ -8,6 +8,13 @@
       "when": 1770679219262,
       "tag": "0000_ancient_starfox",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1772000000000,
+      "tag": "0001_terminal_status_engine_compat",
+      "breakpoints": true
     }
   ]
 }

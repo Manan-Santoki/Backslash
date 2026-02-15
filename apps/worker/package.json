@@ -4,10 +4,11 @@
   "private": true,
   "scripts": {
     "start": "tsx src/index.ts",
-    "dev": "tsx watch src/index.ts"
+    "dev": "tsx watch src/index.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "bullmq": "^5.20.0",
+    "bullmq": "^5.67.3",
     "dockerode": "^4.0.0",
     "drizzle-orm": "^0.38.0",
     "ioredis": "^5.4.0",

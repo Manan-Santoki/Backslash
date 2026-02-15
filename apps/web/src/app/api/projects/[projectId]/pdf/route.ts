@@ -1,8 +1,5 @@
-import { db } from "@/lib/db";
-import { projects } from "@/lib/db/schema";
 import { resolveProjectAccess } from "@/lib/auth/project-access";
 import * as storage from "@/lib/storage";
-import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─── GET /api/projects/[projectId]/pdf ─────────────
