@@ -77,6 +77,67 @@ COMPOSE_FILE=docker-compose.yml
 
 This tells Docker Compose to skip the override file that publishes the port. Your platform's reverse proxy connects to the container over the Docker network — no port leaks to the host.
 
+### Reverse Proxy & WebSocket Setup
+
+**Direct access (no reverse proxy):** WebSocket works out of the box. The frontend auto-detects the ws server on port 3001.
+
+**Behind a reverse proxy (Nginx, Traefik, Caddy, etc.):** You need to route WebSocket traffic to the `ws` container. The frontend auto-detects and connects to `wss://your-domain.com/ws/socket.io` when served over HTTPS.
+
+1. **Route `/ws/*` to the ws container** (port 3001)
+2. **Set `WS_PATH_PREFIX=/ws`** in `.env` so the ws server listens on `/ws/socket.io` instead of `/socket.io`
+3. **Enable `SECURE_COOKIES=true`** if behind HTTPS
+
+<details>
+<summary><strong>Nginx example</strong></summary>
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name your-domain.com;
+
+    # App
+    location / {
+        proxy_pass http://app:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # WebSocket server
+    location /ws/ {
+        proxy_pass http://ws:3001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+</details>
+
+<details>
+<summary><strong>Caddy example</strong></summary>
+
+```caddyfile
+your-domain.com {
+    handle /ws/* {
+        reverse_proxy ws:3001
+    }
+    handle {
+        reverse_proxy app:3000
+    }
+}
+```
+
+</details>
+
+> **Platform-managed proxies (Dokploy, Coolify):** Create a separate route/domain entry for the `ws` service with path `/ws`, container port `3001`, and **do not strip the path prefix**. Set `WS_PATH_PREFIX=/ws` in your environment.
+
 ### Environment Variables
 
 Create a `.env` file in the project root (or edit the one from `.env.example`):
@@ -89,7 +150,6 @@ SESSION_SECRET=change-me-to-a-random-64-char-string
 # Only set this if you want to use an external database.
 # By default, the bundled PostgreSQL is used automatically.
 # DATABASE_URL=postgresql://user:password@your-host:5432/backslash
-AUTO_DB_MIGRATE=true
 MIGRATE_MAX_ATTEMPTS=30
 MIGRATE_RETRY_DELAY_SECONDS=2
 
@@ -112,8 +172,10 @@ DISABLE_SIGNUP=false
 # Set to true if behind HTTPS (reverse proxy with TLS)
 SECURE_COOKIES=false
 
-# WebSocket — override the URL the frontend connects to
-# (default: same hostname, port 3001)
+# WebSocket — set prefix when behind a reverse proxy that routes /ws/* to the ws container
+# WS_PATH_PREFIX=/ws
+
+# WebSocket — override the URL the frontend connects to (usually auto-detected)
 # NEXT_PUBLIC_WS_URL=https://your-domain.com/ws
 
 # Platform deployments (Dokploy, Coolify, etc.) — disables host port binding
@@ -126,7 +188,6 @@ SECURE_COOKIES=false
 | `WS_PORT` | `3001` | Host port to expose the WebSocket server on |
 | `SESSION_SECRET` | — | Secret key for signing/verifying JWT session cookies across `app` and `ws` (**required**) |
 | `DATABASE_URL` | *(bundled postgres)* | Override to use an external PostgreSQL instance |
-| `AUTO_DB_MIGRATE` | `true` | Run Drizzle migrations automatically on startup (app + worker); set `false` only if you manage migrations externally |
 | `MIGRATE_MAX_ATTEMPTS` | `30` | Maximum migration retry attempts on startup |
 | `MIGRATE_RETRY_DELAY_SECONDS` | `2` | Delay between migration retry attempts |
 | `COMPILE_MEMORY` | `1g` | Memory limit per compile container |
@@ -142,6 +203,7 @@ SECURE_COOKIES=false
 | `ASYNC_COMPILE_MAX_CONCURRENT_BUILDS` | `5` | Max concurrent async one-shot compile jobs per worker |
 | `DISABLE_SIGNUP` | `false` | Set to `true` to disable new user registration |
 | `SECURE_COOKIES` | `false` | Set to `true` if serving over HTTPS (reverse proxy with TLS) |
+| `WS_PATH_PREFIX` | *(empty)* | Set to `/ws` when behind a reverse proxy that routes `/ws/*` to the ws container |
 | `NEXT_PUBLIC_WS_URL` | *(auto-detect)* | Override WebSocket server URL for the frontend (e.g. `wss://your-domain.com/ws`) |
 | `COMPOSE_FILE` | *(unset)* | Set to `docker-compose.yml` to disable host port exposure (for platforms) |
 
