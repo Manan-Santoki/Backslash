@@ -192,7 +192,7 @@ export function useWebSocket(
     const socket = io(wsUrl, {
       path: wsPath,
       withCredentials: true,
-      transports: ["websocket", "polling"],
+      transports: ["polling", "websocket"],
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
