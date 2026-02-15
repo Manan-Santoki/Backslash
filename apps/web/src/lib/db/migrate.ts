@@ -1,6 +1,6 @@
-import fs from "node:fs";
-import path from "node:path";
-import { createHash } from "node:crypto";
+import fs from "fs";
+import path from "path";
+import { createHash } from "crypto";
 import postgres from "postgres";
 import { drizzle } from "drizzle-orm/postgres-js";
 import { migrate } from "drizzle-orm/postgres-js/migrator";
