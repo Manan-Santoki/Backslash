@@ -126,6 +126,7 @@ services:
       - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@backslash-postgres:5432/backslash}
       - REDIS_URL=redis://backslash-redis:6379
       - WS_PORT=3001
+      - WS_PATH_PREFIX=${WS_PATH_PREFIX:-}
       - SESSION_SECRET=${SESSION_SECRET:-change-me-to-a-random-64-char-string}
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
     depends_on:

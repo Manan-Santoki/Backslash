@@ -267,7 +267,9 @@ const io = new SocketIOServer<ClientToServerEvents, ServerToClientEvents>(httpSe
     credentials: true,
   },
   transports: ["websocket", "polling"],
-  path: "/socket.io",
+  path: process.env.WS_PATH_PREFIX
+    ? `${process.env.WS_PATH_PREFIX}/socket.io`
+    : "/socket.io",
   pingInterval: 25000,
   pingTimeout: 20000,
 });
