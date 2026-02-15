@@ -34,21 +34,16 @@ export async function ensureBuildStatusEnumCompat(): Promise<void> {
   }
 
   state.inFlight = (async () => {
-    await db.execute(sql`
-      DO $$ BEGIN
-        ALTER TYPE "build_status" ADD VALUE IF NOT EXISTS 'timeout';
-      EXCEPTION
-        WHEN undefined_object THEN NULL;
-      END $$;
-    `);
-
-    await db.execute(sql`
-      DO $$ BEGIN
-        ALTER TYPE "build_status" ADD VALUE IF NOT EXISTS 'canceled';
-      EXCEPTION
-        WHEN undefined_object THEN NULL;
-      END $$;
-    `);
+    // Use plain ALTER TYPE … ADD VALUE IF NOT EXISTS without a PL/pgSQL
+    // EXCEPTION block.  The EXCEPTION clause creates a subtransaction and
+    // PostgreSQL forbids ALTER TYPE ADD VALUE inside subtransactions.
+    // IF NOT EXISTS already handles the "value already present" case safely.
+    await db.execute(
+      sql`ALTER TYPE "build_status" ADD VALUE IF NOT EXISTS 'timeout'`
+    );
+    await db.execute(
+      sql`ALTER TYPE "build_status" ADD VALUE IF NOT EXISTS 'canceled'`
+    );
 
     state.ensured = true;
   })().finally(() => {
