@@ -60,6 +60,9 @@ services:
       - HOSTNAME=0.0.0.0
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@postgres:5432/backslash}
+      - AUTO_DB_MIGRATE=${AUTO_DB_MIGRATE:-true}
+      - MIGRATE_MAX_ATTEMPTS=${MIGRATE_MAX_ATTEMPTS:-30}
+      - MIGRATE_RETRY_DELAY_SECONDS=${MIGRATE_RETRY_DELAY_SECONDS:-2}
       - REDIS_URL=redis://redis:6379
       - STORAGE_PATH=/data/backslash
       - TEMPLATES_PATH=/app/templates
@@ -145,9 +148,6 @@ services:
     environment:
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@postgres:5432/backslash}
-      - AUTO_DB_MIGRATE=${AUTO_DB_MIGRATE:-true}
-      - MIGRATE_MAX_ATTEMPTS=${MIGRATE_MAX_ATTEMPTS:-30}
-      - MIGRATE_RETRY_DELAY_SECONDS=${MIGRATE_RETRY_DELAY_SECONDS:-2}
       - REDIS_URL=redis://redis:6379
       - WS_PORT=3001
       - SESSION_SECRET=${SESSION_SECRET:-change-me-to-a-random-64-char-string}
