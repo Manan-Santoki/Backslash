@@ -28,9 +28,10 @@ function getState(): MigrateState {
 
 function findMigrationsFolder(): string | null {
   const candidates = [
-    path.resolve(process.cwd(), "apps/web/drizzle/migrations"),
-    path.resolve(process.cwd(), "drizzle/migrations"),
-    path.resolve(__dirname, "../../drizzle/migrations"),
+    path.resolve(process.cwd(), "apps/web/drizzle/migrations"),   // monorepo root
+    path.resolve(process.cwd(), "drizzle/migrations"),            // cwd = apps/web
+    path.resolve(process.cwd(), "../web/drizzle/migrations"),     // cwd = apps/worker
+    path.resolve(__dirname, "../../../drizzle/migrations"),        // relative to this file
   ];
 
   return (
