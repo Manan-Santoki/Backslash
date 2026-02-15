@@ -32,25 +32,6 @@ services:
       - backslash
     restart: unless-stopped
 
-  # ── Database Migrations ─────────────────────────────
-  # Runs pending Drizzle migrations using the same production image,
-  # then exits. The app service waits for this to complete.
-  migrate:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-    command: ["node", "apps/web/scripts/migrate.mjs"]
-    environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@postgres:5432/backslash}
-      - MIGRATE_MAX_ATTEMPTS=${MIGRATE_MAX_ATTEMPTS:-30}
-      - MIGRATE_RETRY_DELAY_SECONDS=${MIGRATE_RETRY_DELAY_SECONDS:-2}
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks:
-      - backslash
-    restart: "no"
-
   # ── Web Application ────────────────────────────────
   app:
     build:
@@ -60,7 +41,6 @@ services:
       - HOSTNAME=0.0.0.0
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@postgres:5432/backslash}
-      - AUTO_DB_MIGRATE=${AUTO_DB_MIGRATE:-true}
       - MIGRATE_MAX_ATTEMPTS=${MIGRATE_MAX_ATTEMPTS:-30}
       - MIGRATE_RETRY_DELAY_SECONDS=${MIGRATE_RETRY_DELAY_SECONDS:-2}
       - REDIS_URL=redis://redis:6379
@@ -88,8 +68,6 @@ services:
     depends_on:
       compiler-image:
         condition: service_completed_successfully
-      migrate:
-        condition: service_completed_successfully
       redis:
         condition: service_healthy
       postgres:
@@ -106,7 +84,6 @@ services:
     environment:
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@postgres:5432/backslash}
-      - AUTO_DB_MIGRATE=${AUTO_DB_MIGRATE:-true}
       - MIGRATE_MAX_ATTEMPTS=${MIGRATE_MAX_ATTEMPTS:-30}
       - MIGRATE_RETRY_DELAY_SECONDS=${MIGRATE_RETRY_DELAY_SECONDS:-2}
       - REDIS_URL=redis://redis:6379
@@ -127,8 +104,6 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       compiler-image:
-        condition: service_completed_successfully
-      migrate:
         condition: service_completed_successfully
       redis:
         condition: service_healthy
@@ -153,8 +128,6 @@ services:
       - SESSION_SECRET=${SESSION_SECRET:-change-me-to-a-random-64-char-string}
       - CORS_ORIGIN=${CORS_ORIGIN:-*}
     depends_on:
-      migrate:
-        condition: service_completed_successfully
       redis:
         condition: service_healthy
       postgres:
