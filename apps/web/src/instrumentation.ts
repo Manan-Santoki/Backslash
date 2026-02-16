@@ -1,17 +1,5 @@
 export async function register() {
   if (process.env.NEXT_RUNTIME === "nodejs") {
-    // Run database migrations before anything else
-    try {
-      const { runMigrations } = await import("@/lib/db/migrate");
-      await runMigrations();
-    } catch (err) {
-      console.error(
-        "[Instrumentation] Migration failed:",
-        err instanceof Error ? err.message : err
-      );
-      process.exit(1);
-    }
-
     const runInWeb = process.env.RUN_COMPILE_RUNNER_IN_WEB !== "false";
 
     if (runInWeb) {

@@ -1,5 +1,8 @@
 {
   "name": "backslash",
   "version": "1.0.0",
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "drizzle-orm": "0.38.4"
+  }
 }

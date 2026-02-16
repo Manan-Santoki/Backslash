@@ -103,8 +103,9 @@ async function insertMigrationHash(
 }
 
 /**
- * If a DB already has app tables but is missing the baseline hash,
- * insert the hash for the first migration so Drizzle won't re-run 0000.
+ * If a DB already has app tables but is missing migration hashes,
+ * insert hashes for ALL migrations so Drizzle won't re-run them.
+ * Fresh DBs (no tables) skip this entirely and let migrate() create everything.
  */
 async function baselineInitialMigrationIfNeeded(
   client: postgres.Sql,
@@ -120,22 +121,21 @@ async function baselineInitialMigrationIfNeeded(
     throw new Error("Migration journal is empty");
   }
 
-  const firstEntry = journal.entries[0];
-  const sqlPath = path.join(migrationsFolder, `${firstEntry.tag}.sql`);
-  if (!fs.existsSync(sqlPath)) {
-    throw new Error(`Missing migration SQL file: ${firstEntry.tag}.sql`);
+  for (const entry of journal.entries) {
+    const sqlPath = path.join(migrationsFolder, `${entry.tag}.sql`);
+    if (!fs.existsSync(sqlPath)) continue;
+
+    const hash = sha256File(sqlPath);
+    const alreadyRecorded = await hasMigrationHash(client, hash);
+    if (!alreadyRecorded) {
+      await insertMigrationHash(
+        client,
+        hash,
+        Number(entry.when ?? Date.now())
+      );
+      console.log(`[migrate] Baseline recorded for ${entry.tag}`);
+    }
   }
-
-  const hash = sha256File(sqlPath);
-  const alreadyRecorded = await hasMigrationHash(client, hash);
-  if (alreadyRecorded) return;
-
-  await insertMigrationHash(
-    client,
-    hash,
-    Number(firstEntry.when ?? Date.now())
-  );
-  console.log(`[migrate] Baseline recorded for ${firstEntry.tag}`);
 }
 
 function sleep(ms: number): Promise<void> {

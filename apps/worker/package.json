@@ -10,7 +10,7 @@
   "dependencies": {
     "bullmq": "^5.67.3",
     "dockerode": "^4.0.0",
-    "drizzle-orm": "^0.38.0",
+    "drizzle-orm": "0.38.4",
     "ioredis": "^5.4.0",
     "postgres": "^3.4.0"
   },

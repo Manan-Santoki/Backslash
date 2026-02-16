@@ -33,6 +33,24 @@ services:
       - backslash
     restart: unless-stopped
 
+  # ── Database Migrations (init container) ──────────
+  # Runs once before app/worker start. On success, exits 0.
+  migrate:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    command: ["node", "apps/web/scripts/migrate.mjs"]
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql://backslash:backslash@backslash-postgres:5432/backslash}
+      - MIGRATE_MAX_ATTEMPTS=${MIGRATE_MAX_ATTEMPTS:-30}
+      - MIGRATE_RETRY_DELAY_SECONDS=${MIGRATE_RETRY_DELAY_SECONDS:-2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - backslash
+    restart: "no"
+
   # ── Web Application ────────────────────────────────
   app:
     build:
@@ -67,6 +85,8 @@ services:
       - project-data:/data/backslash
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       compiler-image:
         condition: service_completed_successfully
       redis:
@@ -104,6 +124,8 @@ services:
       - project-data:/data/backslash
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       compiler-image:
         condition: service_completed_successfully
       redis:

@@ -60,9 +60,6 @@ async function publishHeartbeat() {
 }
 
 async function bootstrap() {
-  const { runMigrations } = await import("../../web/src/lib/db/migrate");
-  await runMigrations();
-
   console.log("Backslash Compilation Worker");
   console.log("============================");
   console.log(`Redis: ${REDIS_URL}`);
