@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const LOCK_KEY_1 = 2085062334;
 const LOCK_KEY_2 = 1804289383;
+const IGNORED_NOTICE_CODES = new Set(["42P06", "42P07"]);
 
 const DATABASE_URL =
   process.env.DATABASE_URL ||
@@ -137,7 +138,13 @@ async function main() {
   );
 
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    const client = postgres(DATABASE_URL, { max: 1 });
+    const client = postgres(DATABASE_URL, {
+      max: 1,
+      onnotice: (notice) => {
+        if (notice?.code && IGNORED_NOTICE_CODES.has(notice.code)) return;
+        console.warn("[migrate] PostgreSQL notice:", notice);
+      },
+    });
     let lockAcquired = false;
 
     try {
