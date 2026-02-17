@@ -103,8 +103,9 @@ async function insertMigrationHash(
 }
 
 /**
- * If a DB already has app tables but is missing migration hashes,
- * insert hashes for ALL migrations so Drizzle won't re-run them.
+ * If a DB already has app tables but has no migration tracking at all,
+ * baseline ONLY the initial migration (idx 0) so Drizzle won't re-run it.
+ * Subsequent migrations will be applied normally by Drizzle's migrate().
  * Fresh DBs (no tables) skip this entirely and let migrate() create everything.
  */
 async function baselineInitialMigrationIfNeeded(
@@ -116,26 +117,29 @@ async function baselineInitialMigrationIfNeeded(
 
   await ensureMigrationsTable(client);
 
+  // If the migrations table already has entries, baselining was already done.
+  const existingRows = await client`
+    SELECT 1 FROM public.__drizzle_migrations LIMIT 1
+  `;
+  if (existingRows.length > 0) return;
+
   const journal = readJournal(migrationsFolder);
   if (!Array.isArray(journal.entries) || journal.entries.length === 0) {
     throw new Error("Migration journal is empty");
   }
 
-  for (const entry of journal.entries) {
-    const sqlPath = path.join(migrationsFolder, `${entry.tag}.sql`);
-    if (!fs.existsSync(sqlPath)) continue;
+  // Only baseline the initial migration (the one that created the existing tables).
+  const initialEntry = journal.entries[0];
+  const sqlPath = path.join(migrationsFolder, `${initialEntry.tag}.sql`);
+  if (!fs.existsSync(sqlPath)) return;
 
-    const hash = sha256File(sqlPath);
-    const alreadyRecorded = await hasMigrationHash(client, hash);
-    if (!alreadyRecorded) {
-      await insertMigrationHash(
-        client,
-        hash,
-        Number(entry.when ?? Date.now())
-      );
-      console.log(`[migrate] Baseline recorded for ${entry.tag}`);
-    }
-  }
+  const hash = sha256File(sqlPath);
+  await insertMigrationHash(
+    client,
+    hash,
+    Number(initialEntry.when ?? Date.now())
+  );
+  console.log(`[migrate] Baseline recorded for ${initialEntry.tag}`);
 }
 
 function sleep(ms: number): Promise<void> {
