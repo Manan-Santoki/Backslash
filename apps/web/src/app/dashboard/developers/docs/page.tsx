@@ -15,6 +15,7 @@ import {
   Hammer,
   Download,
   ListOrdered,
+  Tag,
 } from "lucide-react";
 
 // ─── Types ──────────────────────────────────────────
@@ -540,6 +541,101 @@ curl "${BASE}/compile/JOB_ID/output?format=pdf" \\
       },
     ],
   },
+  {
+  title: "Labels",
+  icon: <Tag className="h-5 w-5" />,
+  description: "Create, list, attach, and detach labels for organizing projects.",
+  endpoints: [
+    // ────────────────────────────────────────────────────────────────
+    {
+      method: "GET",
+      path: `${BASE}/labels`,
+      description: "List all labels for the authenticated user.",
+      auth: true,
+      response: `{
+  "labels": [
+    {
+      "id": "uuid",
+      "name": "Important",
+      "userId": "uuid",
+      "createdAt": "2025-01-01T00:00:00Z"
+    }
+  ]
+}`,
+      curl: `curl ${BASE}/labels \\
+  -H "Authorization: Bearer bs_YOUR_API_KEY"`,
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    {
+      method: "PUT",
+      path: `${BASE}/labels/attach`,
+      description:
+        "Attach a label to a project by name. Creates the label if it does not already exist.",
+      auth: true,
+      body: {
+        projectId: {
+          type: "string",
+          required: true,
+          description: "The ID of the project to attach the label to.",
+        },
+        labelName: {
+          type: "string",
+          required: true,
+          description: "The label name. If it doesn't exist, it will be created.",
+        },
+      },
+      response: `{
+  "projectLabel": {
+    "id": "uuid",
+    "projectId": "uuid",
+    "labelId": "uuid"
+  },
+  "label": {
+    "id": "uuid",
+    "name": "Important",
+    "userId": "uuid"
+  }
+}`,
+      curl: `curl -X PUT ${BASE}/labels/attach \\
+  -H "Authorization: Bearer bs_YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"projectId": "PROJECT_ID", "labelName": "Important"}'`,
+    },
+
+    // ────────────────────────────────────────────────────────────────
+    {
+      method: "PUT",
+      path: `${BASE}/labels/detach`,
+      description:
+        "Detach a label from a project. If the label is no longer used by any project, it is deleted.",
+      auth: true,
+      body: {
+        projectId: {
+          type: "string",
+          required: true,
+          description: "The ID of the project to detach the label from.",
+        },
+        labelId: {
+          type: "string",
+          required: true,
+          description: "The ID of the label to detach.",
+        },
+      },
+      response: `{
+  "id": "uuid",
+  "projectId": "uuid",
+  "labelId": "uuid",
+  "deletedLabel": true
+}`,
+      curl: `curl -X PUT ${BASE}/labels/detach \\
+  -H "Authorization: Bearer bs_YOUR_API_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"projectId": "PROJECT_ID", "labelId": "LABEL_ID"}'`,
+    },
+  ],
+},
+
   {
     title: "Files",
     icon: <FileText className="h-5 w-5" />,

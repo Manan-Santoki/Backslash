@@ -5,6 +5,8 @@ import {
   builds,
   projectShares,
   projectPublicShares,
+  labels,
+  projectLabels
 } from "@/lib/db/schema";
 import { withAuth } from "@/lib/auth/middleware";
 import { createProjectSchema } from "@/lib/utils/validation";
@@ -18,7 +20,6 @@ import { v4 as uuidv4 } from "uuid";
 
 // ─── GET /api/projects ─────────────────────────────
 // List all projects for the authenticated user, including shared projects.
-
 export async function GET(request: NextRequest) {
   return withAuth(request, async (_req, user) => {
     try {
@@ -28,9 +29,9 @@ export async function GET(request: NextRequest) {
         .where(eq(projects.userId, user.id))
         .orderBy(desc(projects.updatedAt));
 
-      // For each project, fetch the latest build to get its status
-      const projectsWithBuildStatus = await Promise.all(
+      const projectsWithDetails = await Promise.all(
         userProjects.map(async (project) => {
+          // Latest build
           const [lastBuild] = await db
             .select({ status: builds.status })
             .from(builds)
@@ -38,6 +39,7 @@ export async function GET(request: NextRequest) {
             .orderBy(desc(builds.createdAt), desc(builds.id))
             .limit(1);
 
+          // Active shares
           const activeShares = await db
             .select({ id: projectShares.id })
             .from(projectShares)
@@ -51,6 +53,7 @@ export async function GET(request: NextRequest) {
               )
             );
 
+          // Public share
           const [publicShare] = await db
             .select({ id: projectPublicShares.id })
             .from(projectPublicShares)
@@ -65,19 +68,28 @@ export async function GET(request: NextRequest) {
             )
             .limit(1);
 
+          // Labels
+          const labelsForProject = await db
+            .select({ id: labels.id, name: labels.name })
+            .from(projectLabels)
+            .innerJoin(labels, eq(labels.id, projectLabels.labelId))
+            .where(eq(projectLabels.projectId, project.id));
+
           return {
             ...project,
             lastBuildStatus: lastBuild?.status ?? null,
             sharedWithCount: activeShares.length,
             anyoneShared: Boolean(publicShare),
             isShared: activeShares.length > 0 || Boolean(publicShare),
+            labels: labelsForProject,
           };
         })
       );
 
       // Also fetch projects shared with this user
+      // Also fetch shared projects
       const sharedProjects = await findSharedProjectsByUser(user.id);
-      const sharedWithBuildStatus = await Promise.all(
+      const sharedWithDetails = await Promise.all(
         sharedProjects.map(async (sp) => {
           const [lastBuild] = await db
             .select({ status: builds.status })
@@ -86,16 +98,24 @@ export async function GET(request: NextRequest) {
             .orderBy(desc(builds.createdAt), desc(builds.id))
             .limit(1);
 
+          // Labels
+          const labelsForProject = await db
+            .select({ id: labels.id, name: labels.name })
+            .from(projectLabels)
+            .innerJoin(labels, eq(labels.id, projectLabels.labelId))
+            .where(eq(projectLabels.projectId, sp.id));
+
           return {
             ...sp,
             lastBuildStatus: lastBuild?.status ?? null,
+            labels: labelsForProject,
           };
         })
       );
 
       return NextResponse.json({
-        projects: projectsWithBuildStatus,
-        sharedProjects: sharedWithBuildStatus,
+        projects: projectsWithDetails,
+        sharedProjects: sharedWithDetails,
       }, {
         headers: {
           "Cache-Control": "no-store",

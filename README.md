@@ -259,6 +259,9 @@ curl "https://your-instance.com/api/v1/compile/JOB_ID/output?format=pdf" \
 | `POST` | `/api/v1/projects/:id/compile` | Trigger project compilation |
 | `GET` | `/api/v1/projects/:id/pdf` | Download compiled PDF |
 | `GET` | `/api/v1/projects/:id/builds` | Get build logs & status |
+| `GET` | `/api/v1/labels/` | Get all project labels associated with a user |
+| `PUT` | `/api/v1/labels/attach` | Attach a label to a project. This will create a new label if one doesn't already exist. |
+| `PUT` | `/api/v1/labels/detach` | Detach a label to a project. This will also delete the label if no projects are attached to it anymore. |
 
 ### API Key Management
 
@@ -500,6 +503,8 @@ Backslash uses PostgreSQL with Drizzle ORM. The schema includes:
 - **project_files** — File metadata (path, MIME type, size, directory flag)
 - **builds** — Compilation history (status, engine, logs, duration, exit code)
 - **api_keys** — API keys (hashed key, prefix, usage stats, expiration)
+- **labels** — Labels for project organization (name, user)
+- **project_labels** — Relationship between projects and labels
 
 The database schema is automatically applied when deploying with Docker Compose.
 

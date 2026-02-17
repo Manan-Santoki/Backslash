@@ -1,11 +1,11 @@
 import { db } from "@/lib/db";
-import { projects, projectFiles, builds } from "@/lib/db/schema";
+import { projects, projectFiles, builds, labels, projectLabels } from "@/lib/db/schema";
 import { withAuth } from "@/lib/auth/middleware";
 import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { updateProjectSchema } from "@/lib/utils/validation";
 import { checkProjectAccess } from "@/lib/db/queries/projects";
 import * as storage from "@/lib/storage";
-import { eq, desc } from "drizzle-orm";
+import { eq, and, desc, notExists } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─── GET /api/projects/[projectId] ─────────────────
@@ -38,6 +38,12 @@ export async function GET(
       .orderBy(desc(builds.createdAt))
       .limit(1);
 
+      const labelsForProject = await db
+        .select({ id: labels.id, name: labels.name })
+        .from(projectLabels)
+        .innerJoin(labels, eq(labels.id, projectLabels.labelId))
+        .where(eq(projectLabels.projectId, project.id));
+
     return NextResponse.json({
       project,
       files,
@@ -45,6 +51,7 @@ export async function GET(
       role: access.role,
       shareToken: access.shareToken,
       isAnonymous: access.isAnonymous,
+      labels: labelsForProject,
     });
   } catch (error) {
     console.error("Error fetching project:", error);
@@ -136,6 +143,20 @@ export async function DELETE(
       // Delete project directory from disk
       const projectDir = storage.getProjectDir(project.userId, projectId);
       await storage.deleteDirectory(projectDir);
+
+      // Delete all label relations associated with the project
+      await db.delete(projectLabels).where(eq(projectLabels.projectId, projectId));
+
+      // Purge any labels without any relations
+      await db.delete(labels)
+        .where(
+          and(
+            notExists(db.select()
+              .from(projectLabels)
+              .where(eq(projectLabels.labelId, labels.id))),
+            eq(labels.userId, user.id)
+          )
+        )
 
       return NextResponse.json({ success: true });
     } catch (error) {

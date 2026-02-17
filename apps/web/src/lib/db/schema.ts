@@ -114,6 +114,47 @@ export const projectFiles = pgTable(
   ]
 );
 
+
+//  ─── Labels ──────────────────────────────────
+export const labels = pgTable(
+  "labels",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    name: varchar("name", { length: 255 }).notNull(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("labels_name_idx").on(table.name),
+  ]
+);
+
+//  ───  Project Labels ──────────────────────────────────
+export const projectLabels = pgTable(
+  "project_labels",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => projects.id, { onDelete: "cascade" }),
+
+    labelId: uuid("label_id")
+      .notNull()
+      .references(() => labels.id, { onDelete: "cascade" }),
+
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("project_labels_unique_idx").on(table.projectId, table.labelId),
+    index("project_labels_file_idx").on(table.projectId),
+    index("project_labels_label_idx").on(table.labelId),
+  ]
+);
+
+
 // ─── Builds ─────────────────────────────────────────
 
 export const builds = pgTable(
@@ -220,6 +261,7 @@ export const usersRelations = relations(users, ({ many }) => ({
   builds: many(builds),
   apiKeys: many(apiKeys),
   sharedProjects: many(projectShares),
+  labels: many(labels)
 }));
 
 export const sessionsRelations = relations(sessions, ({ one }) => ({
@@ -232,9 +274,10 @@ export const projectsRelations = relations(projects, ({ one, many }) => ({
   builds: many(builds),
   shares: many(projectShares),
   publicShare: many(projectPublicShares),
+  labels: many(projectLabels),
 }));
 
-export const projectFilesRelations = relations(projectFiles, ({ one }) => ({
+export const projectFilesRelations = relations(projectFiles, ({ one, many }) => ({
   project: one(projects, {
     fields: [projectFiles.projectId],
     references: [projects.id],
@@ -270,3 +313,22 @@ export const projectPublicSharesRelations = relations(
     }),
   })
 );
+
+export const labelsRelations = relations(labels, ({ one, many }) => ({
+  projectLabels: many(projectLabels),
+  users : one(users, {
+    fields: [labels.userId],
+    references: [users.id],
+  })
+}));
+
+export const projectLabelsRelations = relations(projectLabels, ({ one }) => ({
+  project: one(projects, {
+    fields: [projectLabels.projectId],
+    references: [projects.id],
+  }),
+  label: one(labels, {
+    fields: [projectLabels.labelId],
+    references: [labels.id],
+  }),
+}));
