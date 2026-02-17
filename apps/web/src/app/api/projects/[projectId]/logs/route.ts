@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { projects, builds } from "@/lib/db/schema";
+import { builds } from "@/lib/db/schema";
 import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { parseLatexLog } from "@/lib/compiler/logParser";
 import { eq, desc } from "drizzle-orm";

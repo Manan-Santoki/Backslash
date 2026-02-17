@@ -1,5 +1,5 @@
-CREATE TYPE "public"."build_status" AS ENUM('queued', 'compiling', 'success', 'error', 'timeout');--> statement-breakpoint
-CREATE TYPE "public"."engine" AS ENUM('pdflatex', 'xelatex', 'lualatex', 'latex');--> statement-breakpoint
+CREATE TYPE "public"."build_status" AS ENUM('queued', 'compiling', 'success', 'error', 'timeout', 'canceled');--> statement-breakpoint
+CREATE TYPE "public"."engine" AS ENUM('auto', 'pdflatex', 'xelatex', 'lualatex', 'latex');--> statement-breakpoint
 CREATE TYPE "public"."share_role" AS ENUM('viewer', 'editor');--> statement-breakpoint
 CREATE TABLE "api_keys" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
@@ -63,7 +63,7 @@ CREATE TABLE "projects" (
 	"user_id" uuid NOT NULL,
 	"name" varchar(255) NOT NULL,
 	"description" text DEFAULT '',
-	"engine" "engine" DEFAULT 'pdflatex' NOT NULL,
+		"engine" "engine" DEFAULT 'auto' NOT NULL,
 	"main_file" varchar(500) DEFAULT 'main.tex' NOT NULL,
 	"created_at" timestamp DEFAULT now() NOT NULL,
 	"updated_at" timestamp DEFAULT now() NOT NULL

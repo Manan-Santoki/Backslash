@@ -717,7 +717,7 @@
           "typeSchema": "public",
           "primaryKey": false,
           "notNull": true,
-          "default": "'pdflatex'"
+          "default": "'auto'"
         },
         "main_file": {
           "name": "main_file",
@@ -947,13 +947,15 @@
         "compiling",
         "success",
         "error",
-        "timeout"
+        "timeout",
+        "canceled"
       ]
     },
     "public.engine": {
       "name": "engine",
       "schema": "public",
       "values": [
+        "auto",
         "pdflatex",
         "xelatex",
         "lualatex",

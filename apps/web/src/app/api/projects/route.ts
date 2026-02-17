@@ -8,7 +8,7 @@ import {
   labels,
   projectLabels
 } from "@/lib/db/schema";
-import { withAuth, AuthenticatedUser } from "@/lib/auth/middleware";
+import { withAuth } from "@/lib/auth/middleware";
 import { createProjectSchema } from "@/lib/utils/validation";
 import { findSharedProjectsByUser } from "@/lib/db/queries/projects";
 import * as storage from "@/lib/storage";
@@ -163,7 +163,7 @@ export async function POST(request: NextRequest) {
           userId: user.id,
           name,
           description: description ?? "",
-          engine: engine ?? "pdflatex",
+          engine: engine ?? "auto",
           mainFile: "main.tex",
         })
         .returning();

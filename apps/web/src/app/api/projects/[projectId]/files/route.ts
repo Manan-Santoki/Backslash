@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { projects, projectFiles } from "@/lib/db/schema";
+import { projectFiles } from "@/lib/db/schema";
 import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { createFileSchema, validateFilePath } from "@/lib/utils/validation";
 import { broadcastFileEvent } from "@/lib/websocket/server";
@@ -143,7 +143,7 @@ export async function POST(
     broadcastFileEvent({
       type: "file:created",
       projectId,
-      userId: access.user?.id ?? project.userId,
+      userId: access.user?.id ?? "anonymous",
       fileId,
       path: filePath,
       isDirectory: isDirectory ?? false,
