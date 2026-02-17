@@ -14,8 +14,6 @@ COPY apps/ws/package.json apps/ws/
 COPY packages/shared/package.json packages/shared/
 
 # Install dependencies from workspace root
-RUN corepack enable && corepack prepare pnpm@latest --activate
-COPY pnpm-lock.yaml ./
 RUN pnpm install --no-frozen-lockfile
 
 # Copy source
