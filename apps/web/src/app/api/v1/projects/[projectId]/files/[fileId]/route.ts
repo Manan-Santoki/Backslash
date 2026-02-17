@@ -3,7 +3,7 @@ import { projects, projectFiles } from "@/lib/db/schema";
 import { withApiKey } from "@/lib/auth/apikey";
 import { updateFileSchema } from "@/lib/utils/validation";
 import * as storage from "@/lib/storage";
-import { eq, and } from "drizzle-orm";
+import { eq, and, like, or } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 
@@ -202,9 +202,24 @@ export async function DELETE(
         await storage.deleteFile(fullPath);
       }
 
-      await db
-        .delete(projectFiles)
-        .where(eq(projectFiles.id, fileId));
+      if (file.isDirectory) {
+        const prefix = `${file.path}/%`;
+        await db
+          .delete(projectFiles)
+          .where(
+            and(
+              eq(projectFiles.projectId, projectId),
+              or(
+                eq(projectFiles.path, file.path),
+                like(projectFiles.path, prefix)
+              )
+            )
+          );
+      } else {
+        await db
+          .delete(projectFiles)
+          .where(eq(projectFiles.id, fileId));
+      }
 
       return NextResponse.json({ success: true });
     } catch (error) {

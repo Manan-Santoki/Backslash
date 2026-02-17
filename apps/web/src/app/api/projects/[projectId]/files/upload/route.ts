@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { projects, projectFiles } from "@/lib/db/schema";
+import { projectFiles } from "@/lib/db/schema";
 import { resolveProjectAccess } from "@/lib/auth/project-access";
 import { validateFilePath } from "@/lib/utils/validation";
 import { broadcastFileEvent } from "@/lib/websocket/server";
@@ -86,7 +86,7 @@ export async function POST(
       }
 
     const created = [];
-    const actorUserId = access.user?.id ?? project.userId;
+    const actorUserId = access.user?.id ?? "anonymous";
 
       for (let i = 0; i < entries.length; i++) {
         const file = entries[i];

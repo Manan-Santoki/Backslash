@@ -273,6 +273,11 @@ body {
   border-left-width: 2px !important;
 }
 
+/* Native caret color for when drawSelection is not used */
+.cm-content {
+  caret-color: var(--color-text-primary);
+}
+
 /* Syntax highlighting - ensure good contrast */
 .cm-keyword { color: #c678dd; }
 .cm-operator { color: #56b6c2; }

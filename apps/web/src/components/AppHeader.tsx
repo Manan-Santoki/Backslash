@@ -168,6 +168,14 @@ export function AppHeader({ children, leftContent, className }: AppHeaderProps) 
                 <Key className="h-4 w-4" />
                 <span>API Keys</span>
               </DropdownMenuItem>
+              <DropdownMenuItem
+                onClick={() => {
+                  window.location.href = "/dashboard/profile";
+                }}
+              >
+                <User className="h-4 w-4" />
+                <span>Profile</span>
+              </DropdownMenuItem>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={handleLogout}>
                 <LogOut className="h-4 w-4" />

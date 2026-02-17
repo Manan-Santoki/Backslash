@@ -3,6 +3,7 @@ import { Server as SocketIOServer } from "socket.io";
 import IORedis from "ioredis";
 import postgres from "postgres";
 import { randomUUID } from "crypto";
+import { jwtVerify } from "jose";
 
 // ─── Shared Types (inlined to avoid monorepo build issues) ─
 
@@ -91,8 +92,9 @@ const PORT = parseInt(process.env.WS_PORT || "3001", 10);
 const REDIS_URL = process.env.REDIS_URL || "redis://localhost:6379";
 const DATABASE_URL =
   process.env.DATABASE_URL ||
-  "postgresql://backslash:backslash@postgres:5432/backslash";
+  "postgresql://backslash:backslash@backslash-postgres:5432/backslash";
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
+const SESSION_SECRET = process.env.SESSION_SECRET || "change-me-to-a-random-64-char-string";
 
 // ─── Presence Colors ───────────────────────────────
 
@@ -128,14 +130,48 @@ async function validateSession(
   token: string
 ): Promise<{ id: string; email: string; name: string } | null> {
   try {
-    const result = await sql`
-      SELECT u.id, u.email, u.name
-      FROM sessions s
-      INNER JOIN users u ON s.user_id = u.id
-      WHERE s.token = ${token}
-        AND s.expires_at > NOW()
-      LIMIT 1
-    `;
+    let result: { id: string; email: string; name: string }[] = [];
+
+    // Preferred path: JWT session token with session id claim.
+    try {
+      const { payload } = await jwtVerify(
+        token,
+        new TextEncoder().encode(SESSION_SECRET),
+        { algorithms: ["HS256"] }
+      );
+      const userId = payload.sub;
+      const sessionId = payload.sid;
+      const tokenUse = payload.use;
+
+      if (
+        typeof userId === "string" &&
+        typeof sessionId === "string" &&
+        tokenUse === "session"
+      ) {
+        result = await sql`
+          SELECT u.id, u.email, u.name
+          FROM sessions s
+          INNER JOIN users u ON s.user_id = u.id
+          WHERE s.token = ${sessionId}
+            AND s.user_id = ${userId}
+            AND s.expires_at > NOW()
+          LIMIT 1
+        `;
+      } else {
+        result = [];
+      }
+    } catch {
+      // Backward-compatible path for legacy opaque session tokens.
+      result = await sql`
+        SELECT u.id, u.email, u.name
+        FROM sessions s
+        INNER JOIN users u ON s.user_id = u.id
+        WHERE s.token = ${token}
+          AND s.expires_at > NOW()
+        LIMIT 1
+      `;
+    }
+
     if (result.length === 0) return null;
     return result[0] as { id: string; email: string; name: string };
   } catch (err) {
@@ -175,35 +211,21 @@ async function checkProjectAccess(
       return { access: true, role: shareResult[0].role as "viewer" | "editor" };
     }
 
-    // Check if project is shared with anyone
-    const publicShareResult = await sql`
-      SELECT role FROM project_public_shares
-      WHERE project_id = ${projectId}
-        AND (expires_at IS NULL OR expires_at > NOW())
-      LIMIT 1
-    `;
-    if (publicShareResult.length > 0) {
-      if (shareToken) {
-        const tokenShareResult = await sql`
-          SELECT role FROM project_public_shares
-          WHERE project_id = ${projectId}
-            AND token = ${shareToken}
-            AND (expires_at IS NULL OR expires_at > NOW())
-          LIMIT 1
-        `;
-        if (tokenShareResult.length > 0) {
-          return {
-            access: true,
-            role: tokenShareResult[0].role as "viewer" | "editor",
-          };
-        }
-        return { access: false, role: "viewer" };
+    // Public-share access requires a matching token.
+    if (shareToken) {
+      const tokenShareResult = await sql`
+        SELECT role FROM project_public_shares
+        WHERE project_id = ${projectId}
+          AND token = ${shareToken}
+          AND (expires_at IS NULL OR expires_at > NOW())
+        LIMIT 1
+      `;
+      if (tokenShareResult.length > 0) {
+        return {
+          access: true,
+          role: tokenShareResult[0].role as "viewer" | "editor",
+        };
       }
-
-      return {
-        access: true,
-        role: publicShareResult[0].role as "viewer" | "editor",
-      };
     }
 
     return { access: false, role: "viewer" };
@@ -245,7 +267,9 @@ const io = new SocketIOServer<ClientToServerEvents, ServerToClientEvents>(httpSe
     credentials: true,
   },
   transports: ["websocket", "polling"],
-  path: "/socket.io",
+  path: process.env.WS_PATH_PREFIX
+    ? `${process.env.WS_PATH_PREFIX}/socket.io`
+    : "/socket.io",
   pingInterval: 25000,
   pingTimeout: 20000,
 });
@@ -651,7 +675,7 @@ function handleBuildUpdate(message: string) {
 
   const userRoom = getUserRoom(userId);
   const projectRoom = getProjectRoom(payload.projectId);
-  const triggeredByUserId = payload.triggeredByUserId ?? userId ?? null;
+  const triggeredByUserId = payload.triggeredByUserId ?? null;
 
   // Determine event type based on status
   const isComplete =

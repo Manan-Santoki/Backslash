@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { db } from "@/lib/db";
 import { apiKeys, users } from "@/lib/db/schema";
-import { eq, and, gt, or, isNull } from "drizzle-orm";
+import { eq, and, gt, or, isNull, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
 // ─── Key Generation ─────────────────────────────────
@@ -77,7 +77,7 @@ export async function validateApiKey(
   db.update(apiKeys)
     .set({
       lastUsedAt: new Date(),
-      requestCount: apiKey.requestCount + 1,
+      requestCount: sql`${apiKeys.requestCount} + 1`,
     })
     .where(eq(apiKeys.id, apiKey.id))
     .catch(() => {}); // swallow errors
@@ -94,7 +94,7 @@ export async function validateApiKey(
 
 /**
  * Protect an API route with API key authentication.
- * Expects `Authorization: Bearer le_...` header.
+ * Expects `Authorization: Bearer bs_...` header.
  */
 export async function withApiKey(
   request: NextRequest,
@@ -107,7 +107,7 @@ export async function withApiKey(
       {
         error: "Unauthorized",
         message:
-          "API key required. Set the Authorization header to: Bearer le_...",
+          "API key required. Set the Authorization header to: Bearer bs_...",
       },
       { status: 401 }
     );

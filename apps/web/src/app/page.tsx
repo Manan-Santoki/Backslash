@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Eye, Infinity, Server, Code2 } from "lucide-react";
+import { getSessionToken, validateSession } from "@/lib/auth/session";
 
 const features = [
   {
@@ -28,7 +29,17 @@ const features = [
   },
 ];
 
-export default function HomePage() {
+export default async function HomePage() {
+  let isLoggedIn = false;
+  try {
+    const token = await getSessionToken();
+    if (token) {
+      const session = await validateSession(token);
+      isLoggedIn = !!session;
+    }
+  } catch {
+    // Not logged in
+  }
   return (
     <div className="min-h-screen bg-bg-primary">
       {/* Navigation */}
@@ -40,18 +51,29 @@ export default function HomePage() {
             </span>
           </Link>
           <div className="flex items-center gap-4">
-            <Link
-              href="/login"
-              className="text-sm text-text-secondary transition-colors hover:text-text-primary"
-            >
-              Sign in
-            </Link>
-            <Link
-              href="/register"
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-bg-primary transition-colors hover:bg-accent-hover"
-            >
-              Get Started
-            </Link>
+            {isLoggedIn ? (
+              <Link
+                href="/dashboard"
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-bg-primary transition-colors hover:bg-accent-hover"
+              >
+                Dashboard
+              </Link>
+            ) : (
+              <>
+                <Link
+                  href="/login"
+                  className="text-sm text-text-secondary transition-colors hover:text-text-primary"
+                >
+                  Sign in
+                </Link>
+                <Link
+                  href="/register"
+                  className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-bg-primary transition-colors hover:bg-accent-hover"
+                >
+                  Get Started
+                </Link>
+              </>
+            )}
           </div>
         </div>
       </nav>
@@ -68,10 +90,10 @@ export default function HomePage() {
         </p>
         <div className="mt-10 flex items-center justify-center gap-4">
           <Link
-            href="/dashboard"
+            href={isLoggedIn ? "/dashboard" : "/register"}
             className="rounded-lg bg-accent px-6 py-3 text-base font-medium text-bg-primary transition-colors hover:bg-accent-hover"
           >
-            Get Started
+            {isLoggedIn ? "Open Dashboard" : "Get Started"}
           </Link>
           <a
             href="https://github.com/Manan-Santoki/Backslash"

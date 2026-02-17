@@ -1,12 +1,29 @@
 import { db } from "@/lib/db";
 import { projects, builds } from "@/lib/db/schema";
 import { resolveProjectAccess } from "@/lib/auth/project-access";
-import { addCompileJob } from "@/lib/compiler/runner";
+import { enqueueCompileJob } from "@/lib/compiler/compileQueue";
 import { broadcastBuildUpdate } from "@/lib/websocket/server";
 import { healthCheck as dockerHealthCheck, getDockerClient } from "@/lib/compiler/docker";
+import {
+  isDedicatedWorkerHealthy,
+  isWorkerExpectedInWeb,
+} from "@/lib/compiler/workerHealth";
 import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
+import type { Engine } from "@backslash/shared";
+
+const VALID_ENGINES: Engine[] = [
+  "auto",
+  "pdflatex",
+  "xelatex",
+  "lualatex",
+  "latex",
+];
+
+function isValidEngine(value: string): value is Engine {
+  return VALID_ENGINES.includes(value as Engine);
+}
 
 // ─── POST /api/projects/[projectId]/compile ────────
 // Trigger compilation for a project. Owner and editors can compile.
@@ -31,8 +48,36 @@ export async function POST(
 
     const project = access.project;
     const storageUserId = project.userId;
-    const actorUserId = access.user?.id ?? storageUserId;
+    const actorUserId = access.user?.id ?? null;
+    const buildUserId = access.user?.id ?? storageUserId;
+    const runnerExpectedInWeb = isWorkerExpectedInWeb();
+    let compileEngine: Engine = project.engine;
 
+    const contentType = request.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      let body: unknown = {};
+      try {
+        body = await request.json();
+      } catch {
+        body = {};
+      }
+
+      if (body && typeof body === "object" && "engine" in body) {
+        const requestedEngine = (body as Record<string, unknown>).engine;
+        if (typeof requestedEngine !== "string" || !isValidEngine(requestedEngine)) {
+          return NextResponse.json(
+            {
+              error:
+                "Invalid engine. Use one of: auto, pdflatex, xelatex, lualatex, latex",
+            },
+            { status: 400 }
+          );
+        }
+        compileEngine = requestedEngine;
+      }
+    }
+
+    if (runnerExpectedInWeb) {
       // ── Pre-flight: verify Docker is reachable ───────
       const dockerOk = await dockerHealthCheck();
       if (!dockerOk) {
@@ -59,50 +104,63 @@ export async function POST(
         }
       } catch (imgErr) {
         console.error("[Compile] Failed to check compiler image:", imgErr);
+        return NextResponse.json(
+          { error: "Compilation service unavailable — unable to verify compiler image" },
+          { status: 503 }
+        );
       }
+    } else {
+      const workerHealthy = await isDedicatedWorkerHealthy();
+      if (!workerHealthy) {
+        return NextResponse.json(
+          { error: "Compilation worker unavailable — try again shortly" },
+          { status: 503 }
+        );
+      }
+    }
 
-      const buildId = uuidv4();
+    const buildId = uuidv4();
 
-      // Create a build record with status "queued"
-      await db.insert(builds).values({
-        id: buildId,
-        projectId,
-        userId: actorUserId,
-        status: "queued",
-        engine: project.engine,
-      });
+    // Create a build record with status "queued"
+    await db.insert(builds).values({
+      id: buildId,
+      projectId,
+      userId: buildUserId,
+      status: "queued",
+      engine: compileEngine,
+    });
 
-      await db
-        .update(projects)
-        .set({ updatedAt: new Date() })
-        .where(eq(projects.id, projectId));
+    await db
+      .update(projects)
+      .set({ updatedAt: new Date() })
+      .where(eq(projects.id, projectId));
 
-      // Enqueue compile job
-      await addCompileJob({
+    // Enqueue compile job
+    await enqueueCompileJob({
+      buildId,
+      projectId,
+      userId: buildUserId,
+      storageUserId,
+      triggeredByUserId: actorUserId,
+      engine: compileEngine,
+      mainFile: project.mainFile,
+    });
+
+    broadcastBuildUpdate(buildUserId, {
+      projectId,
+      buildId,
+      status: "queued",
+      triggeredByUserId: actorUserId,
+    });
+
+    return NextResponse.json(
+      {
         buildId,
-        projectId,
-        userId: actorUserId,
-        storageUserId,
-        triggeredByUserId: actorUserId,
-        engine: project.engine,
-        mainFile: project.mainFile,
-      });
-
-      broadcastBuildUpdate(actorUserId, {
-        projectId,
-        buildId,
         status: "queued",
-        triggeredByUserId: actorUserId,
-      });
-
-      return NextResponse.json(
-        {
-          buildId,
-          status: "queued",
-          message: "Compilation queued",
-        },
-        { status: 202 }
-      );
+        message: "Compilation queued",
+      },
+      { status: 202 }
+    );
   } catch (error) {
     console.error("Error triggering compilation:", error);
     return NextResponse.json(

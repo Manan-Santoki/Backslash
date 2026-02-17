@@ -4,7 +4,6 @@ import {
   projectFiles,
   builds,
   projectShares,
-  projectPublicShares,
   users,
 } from "@/lib/db/schema";
 import { eq, and, desc, or, isNull, gt } from "drizzle-orm";
@@ -88,24 +87,6 @@ export async function checkProjectAccess(
   const share = await findShareByUserAndProject(userId, projectId);
   if (share) {
     return { access: true, role: share.role, project };
-  }
-
-  const [publicShare] = await db
-    .select()
-    .from(projectPublicShares)
-    .where(
-      and(
-        eq(projectPublicShares.projectId, projectId),
-        or(
-          isNull(projectPublicShares.expiresAt),
-          gt(projectPublicShares.expiresAt, new Date())
-        )
-      )
-    )
-    .limit(1);
-
-  if (publicShare) {
-    return { access: true, role: publicShare.role, project };
   }
 
   return { access: false };
