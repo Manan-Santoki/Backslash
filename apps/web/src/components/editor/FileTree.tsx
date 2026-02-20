@@ -14,6 +14,7 @@ import {
   ChevronRight,
   ChevronDown,
 } from "lucide-react";
+import FileIcon from "./FileIcon";
 
 // ─── Types ──────────────────────────────────────────
 
@@ -361,7 +362,7 @@ function TreeNodeItem({
         ) : (
           <>
             <span className="w-3.5 shrink-0" />
-            <File className="h-4 w-4 shrink-0 text-text-muted" />
+            <FileIcon extension={node.path.split(".").pop() ?? ""} className="h-4 w-4 shrink-0 text-text-muted" />
           </>
         )}
         {isRenaming ? (
@@ -752,7 +753,7 @@ export function FileTree({
             {creating === "folder" ? (
               <Folder className="h-4 w-4 shrink-0 text-accent" />
             ) : (
-              <File className="h-4 w-4 shrink-0 text-text-muted" />
+              <FileIcon extension={newName.split(".").pop() ?? ""}className="h-4 w-4 shrink-0 text-text-muted" />
             )}
             <input
               ref={inputRef}
