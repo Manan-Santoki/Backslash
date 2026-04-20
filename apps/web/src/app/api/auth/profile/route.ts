@@ -1,13 +1,14 @@
 import { withAuth } from "@/lib/auth/middleware";
 import { db } from "@/lib/db";
 import { users } from "@/lib/db/schema";
+import bcrypt from "bcryptjs";
 import { eq, and, ne } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 
 export async function PUT(request: NextRequest) {
   return withAuth(request, async (_req, user) => {
     const body = await request.json();
-    const { name, email } = body;
+    const { name, email, currentPassword } = body;
 
     const updates: { name?: string; email?: string; updatedAt: Date } = {
       updatedAt: new Date(),
@@ -31,7 +32,37 @@ export async function PUT(request: NextRequest) {
         );
       }
 
-      if (email.toLowerCase() !== user.email.toLowerCase()) {
+      const emailChanging = email.toLowerCase() !== user.email.toLowerCase();
+
+      if (emailChanging) {
+        if (typeof currentPassword !== "string" || currentPassword.length === 0) {
+          return NextResponse.json(
+            { error: "Current password is required to change your email." },
+            { status: 401 }
+          );
+        }
+
+        const [authUser] = await db
+          .select({ passwordHash: users.passwordHash })
+          .from(users)
+          .where(eq(users.id, user.id))
+          .limit(1);
+
+        if (!authUser) {
+          return NextResponse.json(
+            { error: "Account not found" },
+            { status: 404 }
+          );
+        }
+
+        const ok = await bcrypt.compare(currentPassword, authUser.passwordHash);
+        if (!ok) {
+          return NextResponse.json(
+            { error: "Incorrect password" },
+            { status: 401 }
+          );
+        }
+
         const existing = await db
           .select({ id: users.id })
           .from(users)

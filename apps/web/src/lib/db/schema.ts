@@ -71,6 +71,26 @@ export const sessions = pgTable(
   ]
 );
 
+// ─── Password Reset Tokens ──────────────────────────
+
+export const passwordResetTokens = pgTable(
+  "password_reset_tokens",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    expiresAt: timestamp("expires_at").notNull(),
+    usedAt: timestamp("used_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("password_reset_tokens_hash_idx").on(table.tokenHash),
+    index("password_reset_tokens_user_idx").on(table.userId),
+  ]
+);
+
 // ─── Projects ───────────────────────────────────────
 
 export const projects = pgTable(

@@ -29,6 +29,13 @@
       "when": 1771900800000,
       "tag": "0003_ai_enabled_toggle",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1776556800000,
+      "tag": "0004_password_resets",
+      "breakpoints": true
     }
   ]
 }

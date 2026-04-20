@@ -11,6 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { PasswordPromptDialog } from "@/components/ui/password-prompt-dialog";
 
 type AiProvider = "openai" | "openrouter" | "anthropic" | "custom";
 
@@ -80,6 +81,8 @@ export default function SettingsPage() {
   const [profileSaving, setProfileSaving] = useState(false);
   const [profileSuccess, setProfileSuccess] = useState("");
   const [profileError, setProfileError] = useState("");
+  const [pwPromptOpen, setPwPromptOpen] = useState(false);
+  const [pwPromptError, setPwPromptError] = useState<string | null>(null);
 
   const [buildFixModel, setBuildFixModel] = useState<AiModelFormState>(
     defaultAiModelState()
@@ -135,31 +138,60 @@ export default function SettingsPage() {
     loadSettings();
   }, []);
 
-  async function saveProfile(e: FormEvent<HTMLFormElement>) {
+  function onProfileSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setProfileError("");
     setProfileSuccess("");
-    setProfileSaving(true);
 
+    const emailChanged =
+      !!user && email.trim().toLowerCase() !== user.email.toLowerCase();
+
+    if (emailChanged) {
+      setPwPromptError(null);
+      setPwPromptOpen(true);
+      return;
+    }
+
+    void submitProfile(null);
+  }
+
+  async function submitProfile(currentPassword: string | null) {
+    setProfileSaving(true);
     try {
+      const body: Record<string, unknown> = { name, email };
+      if (currentPassword !== null) body.currentPassword = currentPassword;
+
       const res = await fetch("/api/auth/profile", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, email }),
+        body: JSON.stringify(body),
       });
 
       const payload = await res.json().catch(() => ({}));
       if (!res.ok) {
-        setProfileError(payload.error || "Failed to update profile");
+        const msg = payload.error || "Failed to update profile";
+        // If the server rejected the password, keep the dialog open and show
+        // the error inline; otherwise close and show in the page.
+        if (res.status === 401 && currentPassword !== null) {
+          setPwPromptError(msg);
+        } else {
+          setPwPromptOpen(false);
+          setPwPromptError(null);
+          setProfileError(msg);
+        }
         return;
       }
 
       setUser(payload.user);
       setName(payload.user.name);
       setEmail(payload.user.email);
+      setPwPromptOpen(false);
+      setPwPromptError(null);
       setProfileSuccess("Profile updated successfully");
       setTimeout(() => setProfileSuccess(""), 3000);
     } catch {
+      setPwPromptOpen(false);
+      setPwPromptError(null);
       setProfileError("Failed to update profile");
     } finally {
       setProfileSaving(false);
@@ -259,6 +291,24 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-10">
+      <PasswordPromptDialog
+        open={pwPromptOpen}
+        title="Confirm email change"
+        message="Enter your current password to change the email on your account."
+        confirmLabel="Change email"
+        submitting={profileSaving}
+        errorMessage={pwPromptError}
+        onConfirm={(pw) => {
+          setPwPromptError(null);
+          void submitProfile(pw);
+        }}
+        onCancel={() => {
+          setPwPromptOpen(false);
+          setPwPromptError(null);
+          setProfileSaving(false);
+        }}
+      />
+
       <div>
         <h1 className="text-2xl font-bold text-text-primary">Settings</h1>
         <p className="mt-1 text-sm text-text-secondary">
@@ -288,7 +338,7 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <form onSubmit={saveProfile} className="space-y-4">
+        <form onSubmit={onProfileSubmit} className="space-y-4">
           <div>
             <label
               htmlFor="name"
@@ -322,6 +372,11 @@ export default function SettingsPage() {
               required
               className="w-full rounded-lg border border-border bg-bg-secondary px-3 py-2 text-sm text-text-primary outline-none transition-colors focus:border-accent focus:ring-1 focus:ring-accent"
             />
+            {user && email.trim().toLowerCase() !== user.email.toLowerCase() && (
+              <p className="mt-1 text-xs text-text-muted">
+                Changing your email will require your current password.
+              </p>
+            )}
           </div>
 
           <button
@@ -495,9 +550,12 @@ export default function SettingsPage() {
                   placeholder={
                     buildFixModel.apiKeySet
                       ? "Stored key exists, leave blank to keep"
-                      : "Optional (env key fallback also supported)"
+                      : "sk-..."
                   }
                 />
+                <p className="mt-1 text-xs text-text-muted">
+                  Required for AI features. Saved encrypted to your account, so it works on any device you sign in from. Leave blank to use the server&apos;s fallback key if the admin configured one.
+                </p>
               </div>
             </div>
 
@@ -598,9 +656,12 @@ export default function SettingsPage() {
                   placeholder={
                     latexWriterModel.apiKeySet
                       ? "Stored key exists, leave blank to keep"
-                      : "Optional (env key fallback also supported)"
+                      : "sk-..."
                   }
                 />
+                <p className="mt-1 text-xs text-text-muted">
+                  Required for AI features. Saved encrypted to your account, so it works on any device you sign in from. Leave blank to use the server&apos;s fallback key if the admin configured one.
+                </p>
               </div>
             </div>
           </div>

@@ -8,6 +8,7 @@ import type {
   UserAiSettings,
 } from "@/lib/ai/types";
 import { eq } from "drizzle-orm";
+import { decryptSecret, encryptSecret } from "@/lib/crypto/secrets";
 
 const AI_PROVIDERS = ["openai", "openrouter", "anthropic", "custom"] as const;
 
@@ -19,6 +20,26 @@ function normalizeNullable(value: string | null | undefined): string | null {
   if (!value) return null;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function decryptStoredApiKey(value: string | null | undefined): string | null {
+  const normalized = normalizeNullable(value);
+  if (!normalized) return null;
+  try {
+    return decryptSecret(normalized);
+  } catch (err) {
+    console.error("[ai/settings] Failed to decrypt stored API key:", err);
+    return null;
+  }
+}
+
+function encryptApiKeyForStorage(value: string | null | undefined): string | null {
+  const normalized = normalizeNullable(value);
+  if (!normalized) return null;
+  // If caller passed an already-encrypted value (e.g. pass-through from read),
+  // don't re-encrypt.
+  if (normalized.startsWith("enc:v1:")) return normalized;
+  return encryptSecret(normalized);
 }
 
 function defaultModelFor(provider: AiProvider, purpose: AiPurpose): string {
@@ -79,13 +100,13 @@ function rowToSettings(row: UserAiSettingsRow | null): UserAiSettings {
       provider: buildProvider,
       model: row.buildModel?.trim() || defaultModelFor(buildProvider, "buildFix"),
       endpoint: normalizeNullable(row.buildEndpoint),
-      apiKey: normalizeNullable(row.buildApiKey),
+      apiKey: decryptStoredApiKey(row.buildApiKey),
     },
     latexWriter: {
       provider: writerProvider,
       model: row.writerModel?.trim() || defaultModelFor(writerProvider, "latexWriter"),
       endpoint: normalizeNullable(row.writerEndpoint),
-      apiKey: normalizeNullable(row.writerApiKey),
+      apiKey: decryptStoredApiKey(row.writerApiKey),
     },
   };
 }
@@ -111,6 +132,9 @@ export async function upsertUserAiSettings(
   userId: string,
   settings: UserAiSettings
 ): Promise<UserAiSettings> {
+  const encryptedBuildKey = encryptApiKeyForStorage(settings.buildFix.apiKey);
+  const encryptedWriterKey = encryptApiKeyForStorage(settings.latexWriter.apiKey);
+
   await db
     .insert(userAiSettings)
     .values({
@@ -119,11 +143,11 @@ export async function upsertUserAiSettings(
       buildProvider: settings.buildFix.provider,
       buildModel: settings.buildFix.model,
       buildEndpoint: normalizeNullable(settings.buildFix.endpoint),
-      buildApiKey: normalizeNullable(settings.buildFix.apiKey),
+      buildApiKey: encryptedBuildKey,
       writerProvider: settings.latexWriter.provider,
       writerModel: settings.latexWriter.model,
       writerEndpoint: normalizeNullable(settings.latexWriter.endpoint),
-      writerApiKey: normalizeNullable(settings.latexWriter.apiKey),
+      writerApiKey: encryptedWriterKey,
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
@@ -133,11 +157,11 @@ export async function upsertUserAiSettings(
         buildProvider: settings.buildFix.provider,
         buildModel: settings.buildFix.model,
         buildEndpoint: normalizeNullable(settings.buildFix.endpoint),
-        buildApiKey: normalizeNullable(settings.buildFix.apiKey),
+        buildApiKey: encryptedBuildKey,
         writerProvider: settings.latexWriter.provider,
         writerModel: settings.latexWriter.model,
         writerEndpoint: normalizeNullable(settings.latexWriter.endpoint),
-        writerApiKey: normalizeNullable(settings.latexWriter.apiKey),
+        writerApiKey: encryptedWriterKey,
         updatedAt: new Date(),
       },
     });
