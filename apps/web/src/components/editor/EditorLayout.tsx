@@ -1254,8 +1254,8 @@ export function EditorLayout({
     [files]
   );
 
-  const handlePdfTextSelect = useCallback((text: string) => {
-    codeEditorRef.current?.highlightText(text);
+  const handlePdfTextSelect = useCallback((text: string, before: string, after: string) => {
+    codeEditorRef.current?.highlightText(text, before, after);
   }, []);
 
   /** Navigate to the first build error's file and line */

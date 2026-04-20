@@ -30,7 +30,7 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
 interface PdfViewerProps {
   pdfUrl: string | null;
   loading: boolean;
-  onTextSelect?: (text: string) => void;
+  onTextSelect?: (text: string, before: string, after: string) => void;
 }
 
 export interface PdfViewerHandle {
@@ -194,18 +194,54 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
     const container = containerRef.current;
     if (!container || !onTextSelect) return;
 
+    function normalize(s: string) {
+      return s.replace(/-\s*\n\s*/g, "").replace(/\s+/g, " ").trim();
+    }
+
+    function findTextLayer(node: Node | null): Element | null {
+      let cur: Node | null = node;
+      while (cur) {
+        if (cur instanceof Element) {
+          const cls = cur.className;
+          if (typeof cls === "string" && /textLayer|textContent/.test(cls)) {
+            return cur;
+          }
+        }
+        cur = cur.parentNode;
+      }
+      return null;
+    }
+
     function handleMouseUp() {
       const selection = window.getSelection();
-      if (!selection || selection.isCollapsed) return;
+      if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
 
-      const text = selection
-        .toString()
-        .replace(/-\s*\n\s*/g, "")
-        .replace(/\s+/g, " ")
-        .trim();
-      if (text.length >= 3) {
-        onTextSelect!(text);
+      const range = selection.getRangeAt(0);
+      const text = normalize(selection.toString());
+      if (text.length < 3) return;
+
+      const CTX = 80;
+      let before = "";
+      let after = "";
+      const layer = findTextLayer(range.startContainer);
+      if (layer) {
+        try {
+          const beforeRange = document.createRange();
+          beforeRange.setStart(layer, 0);
+          beforeRange.setEnd(range.startContainer, range.startOffset);
+          before = normalize(beforeRange.toString()).slice(-CTX);
+
+          const afterLayer = findTextLayer(range.endContainer) || layer;
+          const afterRange = document.createRange();
+          afterRange.setStart(range.endContainer, range.endOffset);
+          afterRange.setEnd(afterLayer, afterLayer.childNodes.length);
+          after = normalize(afterRange.toString()).slice(0, CTX);
+        } catch {
+          // Ignore range errors (cross-page selections, etc.)
+        }
       }
+
+      onTextSelect!(text, before, after);
     }
 
     container.addEventListener("mouseup", handleMouseUp);

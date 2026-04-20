@@ -39,7 +39,7 @@ interface CodeEditorProps {
 }
 
 export interface CodeEditorHandle {
-  highlightText: (text: string) => void;
+  highlightText: (text: string, before?: string, after?: string) => void;
   scrollToLine: (line: number) => void;
   getScrollPosition: () => number;
   setScrollPosition: (pos: number) => void;
@@ -98,7 +98,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
     useImperativeHandle(
       ref,
       () => ({
-        highlightText: (text: string) => {
+        highlightText: (text: string, before?: string, after?: string) => {
           const view = viewRef.current;
           if (!view || !text) return;
 
@@ -107,6 +107,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
 
           const doc = view.state.doc.toString();
           const cursorPos = view.state.selection.main.head;
+          const hasContext = !!((before && before.length > 0) || (after && after.length > 0));
 
           function normalizeWithMap(source: string) {
             const map: number[] = [];
@@ -141,57 +142,104 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
             return { from, to };
           }
 
-          // Try exact match first
-          const exactIdx = doc.indexOf(query);
-          if (exactIdx !== -1) {
-            view.dispatch({
-              selection: { anchor: exactIdx, head: exactIdx + query.length },
-              scrollIntoView: true,
-            });
-            view.focus();
-            return;
+          // Strip LaTeX commands and braces, then tokenize into words
+          function tokenize(s: string): string[] {
+            return s
+              .replace(/\\[a-zA-Z]+\*?/g, " ")
+              .replace(/[{}\\$%&~^_#]/g, " ")
+              .toLowerCase()
+              .split(/\s+/)
+              .filter((w) => w.length > 2);
           }
 
-          // Whitespace-normalized matching with nearest-match selection.
-          const { normalized: docNormalized, map: normMap } = normalizeWithMap(doc);
-          const searchNormalized = query;
-          const fullMatches: number[] = [];
-          let searchIdx = docNormalized.indexOf(searchNormalized);
-          while (searchIdx !== -1) {
-            fullMatches.push(searchIdx);
-            searchIdx = docNormalized.indexOf(searchNormalized, searchIdx + 1);
-          }
-
-          if (fullMatches.length > 0) {
-            let bestFrom = 0;
-            let bestTo = 0;
-            let bestScore = Number.POSITIVE_INFINITY;
-
-            for (const match of fullMatches) {
-              const { from, to } = normalizedRangeToOriginal(
-                normMap,
-                match,
-                match + searchNormalized.length,
-                doc.length
-              );
-              const score = Math.abs(from - cursorPos);
-              if (score < bestScore) {
-                bestScore = score;
-                bestFrom = from;
-                bestTo = to;
+          // Score how well source-context matches PDF-context.
+          // Nearer tokens weighted higher so "right next to the match" dominates.
+          function contextScore(sourceBefore: string, sourceAfter: string): number {
+            const pdfBeforeSet = new Set(tokenize(before || ""));
+            const pdfAfterSet = new Set(tokenize(after || ""));
+            const srcBefore = tokenize(sourceBefore);
+            const srcAfter = tokenize(sourceAfter);
+            let score = 0;
+            for (let i = 0; i < srcBefore.length; i++) {
+              if (pdfBeforeSet.has(srcBefore[srcBefore.length - 1 - i])) {
+                score += 1 / (1 + i);
               }
             }
+            for (let i = 0; i < srcAfter.length; i++) {
+              if (pdfAfterSet.has(srcAfter[i])) {
+                score += 1 / (1 + i);
+              }
+            }
+            return score;
+          }
 
+          // Higher = better. When no PDF context, fall back to nearest-cursor.
+          function scoreMatch(from: number, to: number): number {
+            if (hasContext) {
+              return contextScore(
+                doc.slice(Math.max(0, from - 200), from),
+                doc.slice(to, Math.min(doc.length, to + 200))
+              );
+            }
+            return -Math.abs(from - cursorPos);
+          }
+
+          function pickBest(matches: { from: number; to: number }[]) {
+            let best = matches[0];
+            let bestScore = scoreMatch(best.from, best.to);
+            for (let i = 1; i < matches.length; i++) {
+              const s = scoreMatch(matches[i].from, matches[i].to);
+              if (s > bestScore) {
+                bestScore = s;
+                best = matches[i];
+              }
+            }
+            return best;
+          }
+
+          // Stage 1: exact matches
+          const exactMatches: { from: number; to: number }[] = [];
+          let idx = doc.indexOf(query);
+          while (idx !== -1) {
+            exactMatches.push({ from: idx, to: idx + query.length });
+            idx = doc.indexOf(query, idx + 1);
+          }
+          if (exactMatches.length > 0) {
+            const { from, to } = pickBest(exactMatches);
             view.dispatch({
-              selection: { anchor: bestFrom, head: bestTo },
+              selection: { anchor: from, head: to },
               scrollIntoView: true,
             });
             view.focus();
             return;
           }
 
-          // Last resort: try matching just the first few words
-          const words = searchNormalized.split(" ").filter(Boolean);
+          // Stage 2: whitespace-normalized matching
+          const { normalized: docNormalized, map: normMap } = normalizeWithMap(doc);
+          const fullMatches: { from: number; to: number }[] = [];
+          let searchIdx = docNormalized.indexOf(query);
+          while (searchIdx !== -1) {
+            const { from, to } = normalizedRangeToOriginal(
+              normMap,
+              searchIdx,
+              searchIdx + query.length,
+              doc.length
+            );
+            fullMatches.push({ from, to });
+            searchIdx = docNormalized.indexOf(query, searchIdx + 1);
+          }
+          if (fullMatches.length > 0) {
+            const { from, to } = pickBest(fullMatches);
+            view.dispatch({
+              selection: { anchor: from, head: to },
+              scrollIntoView: true,
+            });
+            view.focus();
+            return;
+          }
+
+          // Stage 3: partial match on the first few words
+          const words = query.split(" ").filter(Boolean);
           if (words.length >= 2) {
             const partial = words.slice(0, Math.min(4, words.length)).join(" ");
             const partialIdx = docNormalized.indexOf(partial);
