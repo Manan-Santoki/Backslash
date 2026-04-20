@@ -39,7 +39,7 @@
     "class-variance-authority": "^0.7.0",
     "clsx": "^2.1.0",
     "dockerode": "^4.0.0",
-    "drizzle-orm": "0.38.4",
+    "drizzle-orm": "0.45.2",
     "ioredis": "^5.4.0",
     "jose": "^5.10.0",
     "lucide-react": "^0.460.0",
