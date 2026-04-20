@@ -81,6 +81,13 @@ services:
       - SECURE_COOKIES=${SECURE_COOKIES:-false}
       - PROJECTS_VOLUME=backslash-project-data
       - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-}
+      - APP_URL=${APP_URL:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_SECURE=${SMTP_SECURE:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
     volumes:
       - project-data:/data/backslash
       - /var/run/docker.sock:/var/run/docker.sock
