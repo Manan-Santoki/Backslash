@@ -41,7 +41,7 @@ export default async function HomePage() {
     // Not logged in
   }
   return (
-    <div className="min-h-screen bg-bg-primary">
+    <div className="flex min-h-screen flex-col bg-bg-primary">
       {/* Navigation */}
       <nav className="border-b border-border bg-bg-secondary/50 backdrop-blur-sm">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
@@ -127,7 +127,7 @@ export default async function HomePage() {
       </section>
 
       {/* Footer */}
-      <footer className="border-t border-border bg-bg-secondary/50">
+      <footer className="mt-auto border-t border-border bg-bg-secondary/50">
         <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
           <span className="text-sm text-text-muted font-mono">
             \Backslash
