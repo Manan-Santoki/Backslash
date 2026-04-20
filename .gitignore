@@ -10,6 +10,8 @@ dist/
 # Environment
 .env
 .env.local
+.env.prod
+.env.production
 
 # OS
 .DS_Store
