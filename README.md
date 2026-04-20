@@ -10,8 +10,9 @@
 </p>
 
 ## 🎥 Demo
+https://github.com/user-attachments/assets/16e5fb58-f64b-47cc-a2a6-185f437c3f3b
 
-[![Demo Video](https://img.youtube.com/vi/P7Zsps_qG-E/0.jpg)](https://www.youtube.com/watch?v=P7Zsps_qG-E)
+
 
 ---
 
