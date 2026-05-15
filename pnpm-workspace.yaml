@@ -1,3 +1,13 @@
 packages:
  - "apps/*"
  - "packages/*"
+
+# pnpm 11+ reads onlyBuiltDependencies from here (not root package.json).
+# Listed packages are allowed to run install/postinstall scripts. Everything
+# else stays sandboxed.
+onlyBuiltDependencies:
+ - esbuild
+ - "@tailwindcss/oxide"
+ - sharp
+ - unrs-resolver
+ - "@parcel/watcher"
