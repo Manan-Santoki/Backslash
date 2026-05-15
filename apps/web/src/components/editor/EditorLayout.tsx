@@ -512,7 +512,6 @@ export function EditorLayout({
           if (build.status === "success") {
             setPdfUrl(withShareToken(`/api/projects/${project.id}/pdf?t=${Date.now()}`));
             restoreViewPositionsAfterBuild();
-            setAutoCompileEnabled(true);
 
             // If file was changed during build, recompile
             if (pendingRecompileRef.current) {
@@ -674,7 +673,6 @@ export function EditorLayout({
       if (data.status === "success") {
         setPdfUrl(withShareToken(`/api/projects/${project.id}/pdf?t=${Date.now()}`));
         restoreViewPositionsAfterBuild();
-        setAutoCompileEnabled(true);
 
         // If file was changed during build, recompile with latest content
         if (pendingRecompileRef.current) {
