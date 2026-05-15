@@ -237,10 +237,6 @@ export function EditorLayout({
   const codeEditorRef = useRef<CodeEditorHandle>(null);
   const pdfViewerRef = useRef<PdfViewerHandle>(null);
   const buildLogsPanelRef = useRef<ImperativePanelHandle>(null);
-  const editorScrollRef = useRef<number | null>(null);
-  const editorSelectionRef = useRef<{ anchor: number; head: number } | null>(
-    null
-  );
   const savedContentRef = useRef<Map<string, string>>(new Map());
   const fileContentsRef = useRef<Map<string, string>>(new Map());
   const pollIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -263,21 +259,12 @@ export function EditorLayout({
 
   const saveViewPositionsBeforeBuild = useCallback(() => {
     pdfViewerRef.current?.saveScrollPosition();
-    editorScrollRef.current = codeEditorRef.current?.getScrollPosition() ?? null;
-    editorSelectionRef.current = codeEditorRef.current?.getSelection() ?? null;
   }, []);
 
   const restoreViewPositionsAfterBuild = useCallback(() => {
-    requestAnimationFrame(() => {
-      if (editorScrollRef.current !== null) {
-        codeEditorRef.current?.setScrollPosition(editorScrollRef.current);
-      }
-      if (editorSelectionRef.current) {
-        codeEditorRef.current?.setSelection(editorSelectionRef.current);
-      }
-      editorScrollRef.current = null;
-      editorSelectionRef.current = null;
-    });
+    // PDF viewer handles its own restore on reload; the editor must NOT be
+    // touched here because the user keeps typing during auto-compile and
+    // forcing the cursor back to its pre-build position causes #31.
   }, []);
 
   const formatExpiry = useCallback((expiresAt: string | null | undefined) => {
