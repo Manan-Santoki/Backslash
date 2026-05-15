@@ -299,6 +299,11 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const editorViewClassRef = useRef<any>(null);
 
+    // Store Transaction class so external dispatches can opt out of undo
+    // history (prevents Ctrl+Z from reverting to another file's contents).
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const transactionClassRef = useRef<any>(null);
+
     // ─── Remote cursor state & effects (CodeMirror StateField + StateEffect) ───
 
     // Store CodeMirror StateEffect/StateField refs for remote cursors
@@ -321,7 +326,8 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
       let detachPointerDown: (() => void) | null = null;
 
       async function initEditor() {
-        const { EditorState, StateEffect, StateField } = await import("@codemirror/state");
+        const { EditorState, StateEffect, StateField, Transaction } = await import("@codemirror/state");
+        transactionClassRef.current = Transaction;
         const {
           EditorView,
           lineNumbers,
@@ -731,6 +737,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
               anchor: Math.min(prevSel.anchor, nextMax),
               head: Math.min(prevSel.head, nextMax),
             },
+            annotations: [Transaction.addToHistory.of(false)],
           });
           requestAnimationFrame(() => {
             if (view) {
@@ -777,6 +784,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
         const prevSel = view.state.selection.main;
         const prevScrollTop = view.scrollDOM.scrollTop;
         const nextMax = content.length;
+        const T = transactionClassRef.current;
         view.dispatch({
           changes: {
             from: 0,
@@ -787,6 +795,10 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
             anchor: Math.min(prevSel.anchor, nextMax),
             head: Math.min(prevSel.head, nextMax),
           },
+          // Keep file-switch content swaps out of the undo history; otherwise
+          // Ctrl+Z on a freshly-opened file reverts to the previous file's
+          // contents and the resulting onChange auto-saves the corruption.
+          ...(T ? { annotations: [T.addToHistory.of(false)] } : {}),
         });
         requestAnimationFrame(() => {
           view.scrollDOM.scrollTop = prevScrollTop;
@@ -805,12 +817,15 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
 
       isExternalUpdate.current = true;
       try {
+        const T = transactionClassRef.current;
         view.dispatch({
           changes: changes.map((c) => ({
             from: Math.min(c.from, view.state.doc.length),
             to: Math.min(c.to, view.state.doc.length),
             insert: c.insert,
           })),
+          // Remote edits shouldn't show up in this user's local undo stack.
+          ...(T ? { annotations: [T.addToHistory.of(false)] } : {}),
         });
       } catch {
         // If granular apply fails, we'll rely on the full content sync
