@@ -43,7 +43,7 @@
     "ioredis": "^5.4.0",
     "jose": "^5.10.0",
     "lucide-react": "^0.460.0",
-    "next": "^15.5.15",
+    "next": "^15.5.18",
     "nodemailer": "^6.9.16",
     "postgres": "^3.4.0",
     "react": "^19.0.2",
