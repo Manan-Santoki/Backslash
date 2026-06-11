@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import IORedis from "ioredis";
 import { Queue } from "bullmq";
+import { sql } from "drizzle-orm";
+import { db } from "@/lib/db";
 import { getRunnerHealth } from "@/lib/compiler/runner";
 import { getAsyncCompileRunnerHealth } from "@/lib/compiler/asyncCompileRunner";
 import { COMPILE_QUEUE_NAME } from "@/lib/compiler/compileQueue";
@@ -12,8 +14,15 @@ import { getDockerClient, healthCheck as dockerHealthCheck } from "@/lib/compile
 // Call this after deploy to immediately see what's broken.
 
 export async function GET() {
-  const checks: Record<string, { ok: boolean; detail?: string }> = {};
+  const checks: Record<
+    string,
+    { ok: boolean; detail?: string; latency_ms?: number }
+  > = {};
   const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  const postgresTimeoutMs = Math.max(
+    parseInt(process.env.POSTGRES_HEALTH_TIMEOUT_MS || "3000", 10),
+    1000
+  );
   const workerHeartbeatKey =
     process.env.WORKER_HEARTBEAT_KEY || "compile:worker:heartbeat";
   const workerHeartbeatMaxAgeMs = Math.max(
@@ -38,6 +47,39 @@ export async function GET() {
       enableReadyCheck: false,
     };
   };
+
+  // 0. Postgres
+  try {
+    const startedAt = Date.now();
+    let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        db.execute(sql`SELECT 1`),
+        new Promise<never>((_, reject) => {
+          timeoutHandle = setTimeout(
+            () =>
+              reject(
+                new Error(`SELECT 1 timed out after ${postgresTimeoutMs}ms`)
+              ),
+            postgresTimeoutMs
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timeoutHandle);
+    }
+    const latencyMs = Date.now() - startedAt;
+    checks.postgres = {
+      ok: true,
+      latency_ms: latencyMs,
+      detail: `SELECT 1 ok in ${latencyMs}ms`,
+    };
+  } catch (err) {
+    checks.postgres = {
+      ok: false,
+      detail: err instanceof Error ? err.message : String(err),
+    };
+  }
 
   // 1. Redis
   try {

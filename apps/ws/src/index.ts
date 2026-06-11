@@ -256,9 +256,19 @@ subscriber.on("connect", () => {
 // ─── Socket.IO Server ──────────────────────────────
 
 const httpServer = createServer((_req, res) => {
-  // Health check endpoint
-  res.writeHead(200, { "Content-Type": "application/json" });
-  res.end(JSON.stringify({ status: "ok", service: "backslash-ws" }));
+  // Health check endpoint — healthy only when the Redis subscriber is
+  // connected, since build/file fan-out is dead without it. Reading
+  // `subscriber.status` is synchronous, so this stays cheap.
+  const redisStatus = subscriber.status;
+  const healthy = redisStatus === "ready";
+  res.writeHead(healthy ? 200 : 503, { "Content-Type": "application/json" });
+  res.end(
+    JSON.stringify(
+      healthy
+        ? { status: "ok", service: "backslash-ws", redis: "ready" }
+        : { status: "unhealthy", service: "backslash-ws", redis: redisStatus }
+    )
+  );
 });
 
 const io = new SocketIOServer<ClientToServerEvents, ServerToClientEvents>(httpServer, {
