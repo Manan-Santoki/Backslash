@@ -44,7 +44,7 @@
     "jose": "^5.10.0",
     "lucide-react": "^0.460.0",
     "next": "^15.5.15",
-    "nodemailer": "^6.9.16",
+    "nodemailer": "^9.0.1",
     "postgres": "^3.4.0",
     "react": "^19.0.2",
     "react-dom": "^19.0.2",
