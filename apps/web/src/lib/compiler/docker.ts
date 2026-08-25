@@ -35,8 +35,45 @@ const COMPILE_CPUS = parseFloat(
     String(LIMITS.COMPILE_CPUS_DEFAULT)
 );
 
-const STORAGE_PATH = process.env.STORAGE_PATH || "/data";
-const PROJECTS_VOLUME = process.env.PROJECTS_VOLUME || "backslash-project-data";
+const DEFAULT_STORAGE_PATH = "/data";
+const DEFAULT_PROJECTS_VOLUME = "backslash-project-data";
+
+export interface ProjectStorageMount {
+  Type: "volume" | "bind";
+  Source: string;
+  Target: string;
+  ReadOnly: false;
+}
+
+/**
+ * Resolves the project storage mount shared with ephemeral compiler containers.
+ *
+ * The app and worker run inside Docker but create compiler containers through
+ * the host Docker daemon. A bind mount therefore has to use the absolute path
+ * on the Docker host, not the path as seen inside the app/worker container.
+ */
+export function resolveProjectStorageMount(
+  env: NodeJS.ProcessEnv = process.env
+): ProjectStorageMount {
+  const target = env.STORAGE_PATH?.trim() || DEFAULT_STORAGE_PATH;
+  const bindPath = env.PROJECTS_BIND_PATH?.trim();
+
+  if (bindPath) {
+    return {
+      Type: "bind",
+      Source: bindPath,
+      Target: target,
+      ReadOnly: false,
+    };
+  }
+
+  return {
+    Type: "volume",
+    Source: env.PROJECTS_VOLUME?.trim() || DEFAULT_PROJECTS_VOLUME,
+    Target: target,
+    ReadOnly: false,
+  };
+}
 
 // ─── Types ─────────────────────────────────────────
 
@@ -198,7 +235,8 @@ export async function detectEngine(
  * - PidsLimit: 256 (prevents fork bombs)
  * - Per-container memory and CPU limits
  *
- * The project directory is bind-mounted into the container at /work.
+ * Project storage is mounted at the same path used by the app and worker.
+ * Named volumes are used by default; PROJECTS_BIND_PATH enables a host bind.
  * Timeout is enforced via JS setTimeout + container.kill().
  * The container is always removed after use.
  */
@@ -216,8 +254,11 @@ export async function runCompileContainer(
   const engineFlag = ENGINE_FLAGS[engine];
   const memoryBytes = parseMemoryString(COMPILE_MEMORY);
   const nanoCpus = Math.floor(COMPILE_CPUS * 1e9);
+  const projectStorageMount = resolveProjectStorageMount();
 
-  console.log(`[Docker] Engine: ${engine}, Image: ${COMPILER_IMAGE}, Volume: ${PROJECTS_VOLUME} -> ${STORAGE_PATH}`);
+  console.log(
+    `[Docker] Engine: ${engine}, Image: ${COMPILER_IMAGE}, Storage: ${projectStorageMount.Type}:${projectStorageMount.Source} -> ${projectStorageMount.Target}`
+  );
 
   const cmd = [
     "latexmk",
@@ -253,14 +294,7 @@ export async function runCompileContainer(
       WorkingDir: projectDir,
       NetworkDisabled: true,
       HostConfig: {
-        Mounts: [
-          {
-            Type: "volume" as const,
-            Source: PROJECTS_VOLUME,
-            Target: STORAGE_PATH,
-            ReadOnly: false,
-          },
-        ],
+        Mounts: [projectStorageMount],
         Memory: memoryBytes,
         NanoCpus: nanoCpus,
         PidsLimit: 256,

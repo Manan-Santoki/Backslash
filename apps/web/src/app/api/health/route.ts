@@ -5,7 +5,11 @@ import { getRunnerHealth } from "@/lib/compiler/runner";
 import { getAsyncCompileRunnerHealth } from "@/lib/compiler/asyncCompileRunner";
 import { COMPILE_QUEUE_NAME } from "@/lib/compiler/compileQueue";
 import { ASYNC_COMPILE_QUEUE_NAME } from "@/lib/compiler/asyncCompileQueue";
-import { getDockerClient, healthCheck as dockerHealthCheck } from "@/lib/compiler/docker";
+import {
+  getDockerClient,
+  healthCheck as dockerHealthCheck,
+  resolveProjectStorageMount,
+} from "@/lib/compiler/docker";
 
 // ─── GET /api/health ────────────────────────────────
 // Diagnostic endpoint — checks every component in the build pipeline.
@@ -225,15 +229,23 @@ export async function GET() {
     };
   }
 
-  // 7. Project volume
+  // 7. Project storage mount
   try {
-    const docker = getDockerClient();
-    const volumeName = process.env.PROJECTS_VOLUME || "backslash-project-data";
-    const volume = await docker.getVolume(volumeName).inspect();
-    checks.project_volume = {
-      ok: true,
-      detail: `name=${volume.Name} driver=${volume.Driver}`,
-    };
+    const mount = resolveProjectStorageMount();
+
+    if (mount.Type === "bind") {
+      checks.project_volume = {
+        ok: true,
+        detail: `type=bind source=${mount.Source} target=${mount.Target}`,
+      };
+    } else {
+      const docker = getDockerClient();
+      const volume = await docker.getVolume(mount.Source).inspect();
+      checks.project_volume = {
+        ok: true,
+        detail: `type=volume name=${volume.Name} driver=${volume.Driver}`,
+      };
+    }
   } catch (err) {
     checks.project_volume = {
       ok: false,

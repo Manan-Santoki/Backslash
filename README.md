@@ -81,6 +81,22 @@ COMPOSE_FILE=docker-compose.yml
 
 This tells Docker Compose to skip the override file that publishes the port. Your platform's reverse proxy connects to the container over the Docker network — no port leaks to the host.
 
+### Project Storage
+
+Project files use the `backslash-project-data` Docker volume by default. Named volumes survive normal container replacement and `docker compose down`; do not pass `--volumes` if you want to retain them.
+
+To store project data in a host directory instead, create the directory on the Docker host and set its absolute path in `.env`:
+
+```bash
+sudo mkdir -p /srv/backslash/data
+```
+
+```env
+PROJECTS_BIND_PATH=/srv/backslash/data
+```
+
+The same host path is mounted into the web app, compile worker, and ephemeral LaTeX compiler containers. Relative paths are not supported because compiler containers are created through the host Docker daemon.
+
 ### Reverse Proxy & WebSocket Setup
 
 **Direct access (no reverse proxy):** WebSocket works out of the box. The frontend auto-detects the ws server on port 3001.
@@ -169,6 +185,9 @@ WORKER_HEARTBEAT_MAX_AGE_MS=30000
 WORKER_HEARTBEAT_INTERVAL_MS=5000
 ASYNC_COMPILE_RESULT_TTL_MINUTES=60
 ASYNC_COMPILE_MAX_CONCURRENT_BUILDS=5
+
+# Optional absolute Docker-host path for bind-mounted project storage
+# PROJECTS_BIND_PATH=/srv/backslash/data
 
 # Registration
 DISABLE_SIGNUP=false

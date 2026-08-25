@@ -63,7 +63,7 @@ services:
       - MIGRATE_MAX_ATTEMPTS=${MIGRATE_MAX_ATTEMPTS:-30}
       - MIGRATE_RETRY_DELAY_SECONDS=${MIGRATE_RETRY_DELAY_SECONDS:-2}
       - REDIS_URL=redis://backslash-redis:6379
-      - STORAGE_PATH=/data/backslash
+      - STORAGE_PATH=${STORAGE_PATH:-/data/backslash}
       - TEMPLATES_PATH=/app/templates
       - COMPILER_IMAGE=backslash-compiler
       - COMPILE_MEMORY=${COMPILE_MEMORY:-1g}
@@ -79,7 +79,8 @@ services:
       - SESSION_SECRET=${SESSION_SECRET:-change-me-to-a-random-64-char-string}
       - DISABLE_SIGNUP=${DISABLE_SIGNUP:-false}
       - SECURE_COOKIES=${SECURE_COOKIES:-false}
-      - PROJECTS_VOLUME=backslash-project-data
+      - PROJECTS_VOLUME=${PROJECTS_VOLUME:-backslash-project-data}
+      - PROJECTS_BIND_PATH=${PROJECTS_BIND_PATH:-}
       - NEXT_PUBLIC_WS_URL=${NEXT_PUBLIC_WS_URL:-}
       - APP_URL=${APP_URL:-}
       - SMTP_HOST=${SMTP_HOST:-}
@@ -89,7 +90,7 @@ services:
       - SMTP_PASS=${SMTP_PASS:-}
       - SMTP_FROM=${SMTP_FROM:-}
     volumes:
-      - project-data:/data/backslash
+      - ${PROJECTS_BIND_PATH:-project-data}:${STORAGE_PATH:-/data/backslash}
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       migrate:
@@ -115,20 +116,21 @@ services:
       - MIGRATE_MAX_ATTEMPTS=${MIGRATE_MAX_ATTEMPTS:-30}
       - MIGRATE_RETRY_DELAY_SECONDS=${MIGRATE_RETRY_DELAY_SECONDS:-2}
       - REDIS_URL=redis://backslash-redis:6379
-      - STORAGE_PATH=/data/backslash
+      - STORAGE_PATH=${STORAGE_PATH:-/data/backslash}
       - COMPILER_IMAGE=backslash-compiler
       - COMPILE_MEMORY=${COMPILE_MEMORY:-1g}
       - COMPILE_CPUS=${COMPILE_CPUS:-1.5}
       - MAX_CONCURRENT_BUILDS=${MAX_CONCURRENT_BUILDS:-5}
       - COMPILE_TIMEOUT=${COMPILE_TIMEOUT:-120}
       - STALE_BUILD_TTL_MINUTES=${STALE_BUILD_TTL_MINUTES:-60}
-      - PROJECTS_VOLUME=backslash-project-data
+      - PROJECTS_VOLUME=${PROJECTS_VOLUME:-backslash-project-data}
+      - PROJECTS_BIND_PATH=${PROJECTS_BIND_PATH:-}
       - WORKER_HEARTBEAT_KEY=${WORKER_HEARTBEAT_KEY:-compile:worker:heartbeat}
       - WORKER_HEARTBEAT_INTERVAL_MS=${WORKER_HEARTBEAT_INTERVAL_MS:-5000}
       - ASYNC_COMPILE_RESULT_TTL_MINUTES=${ASYNC_COMPILE_RESULT_TTL_MINUTES:-60}
       - ASYNC_COMPILE_MAX_CONCURRENT_BUILDS=${ASYNC_COMPILE_MAX_CONCURRENT_BUILDS:-5}
     volumes:
-      - project-data:/data/backslash
+      - ${PROJECTS_BIND_PATH:-project-data}:${STORAGE_PATH:-/data/backslash}
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       migrate:
@@ -192,6 +194,6 @@ volumes:
     driver: local
   project-data:
     driver: local
-    name: backslash-project-data
+    name: ${PROJECTS_VOLUME:-backslash-project-data}
   redis-data:
     driver: local
