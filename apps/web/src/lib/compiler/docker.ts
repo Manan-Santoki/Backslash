@@ -92,6 +92,16 @@ export interface CompileContainerResult {
   engineUsed: Exclude<Engine, "auto">;
 }
 
+/**
+ * Keep latexmk artifacts beside the entry file. Without an explicit output
+ * directory, latexmk writes them to its working directory even when the entry
+ * file lives in a nested folder (for example, `fulltime/resume.tex`).
+ */
+export function getCompileOutputDirectory(mainFile: string): string {
+  const normalizedMainFile = mainFile.replace(/\\/g, "/");
+  return path.posix.dirname(normalizedMainFile);
+}
+
 // ─── Helpers ───────────────────────────────────────
 
 /**
@@ -255,6 +265,7 @@ export async function runCompileContainer(
   const memoryBytes = parseMemoryString(COMPILE_MEMORY);
   const nanoCpus = Math.floor(COMPILE_CPUS * 1e9);
   const projectStorageMount = resolveProjectStorageMount();
+  const outputDirectory = getCompileOutputDirectory(mainFile);
 
   console.log(
     `[Docker] Engine: ${engine}, Image: ${COMPILER_IMAGE}, Storage: ${projectStorageMount.Type}:${projectStorageMount.Source} -> ${projectStorageMount.Target}`
@@ -264,6 +275,7 @@ export async function runCompileContainer(
     "latexmk",
     engineFlag,
     "-gg",
+    `-outdir=${outputDirectory}`,
     "-interaction=nonstopmode",
     "-halt-on-error",
     "-file-line-error",

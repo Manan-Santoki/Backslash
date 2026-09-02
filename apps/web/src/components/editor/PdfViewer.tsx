@@ -43,19 +43,133 @@ const MIN_ZOOM = 0.25;
 const MAX_ZOOM = 4;
 const ZOOM_STEP = 0.25;
 const ZOOM_WHEEL_SENSITIVITY = 0.002;
+const RESIZE_DEBOUNCE_MS = 120;
+
+interface PdfDocumentLayerProps {
+  file: string;
+  isActive: boolean;
+  pageWidth: number | undefined;
+  devicePixelRatio: number;
+  onLoad: (file: string, numPages: number) => void;
+  onReady: (file: string, numPages: number) => void;
+  onError: (file: string) => void;
+  setPageRef: (pageNum: number, element: HTMLDivElement | null) => void;
+}
+
+/**
+ * A keyed document layer lets an updated PDF render off-screen while the
+ * previous version remains visible. Once every page canvas is ready, React can
+ * promote this same layer without remounting it or flashing an empty viewer.
+ */
+function PdfDocumentLayer({
+  file,
+  isActive,
+  pageWidth,
+  devicePixelRatio,
+  onLoad,
+  onReady,
+  onError,
+  setPageRef,
+}: PdfDocumentLayerProps) {
+  const [layerNumPages, setLayerNumPages] = useState(0);
+  const renderedPagesRef = useRef<Set<number>>(new Set());
+
+  useEffect(() => {
+    renderedPagesRef.current.clear();
+  }, [file, pageWidth, devicePixelRatio]);
+
+  const handleLoad = useCallback(
+    ({ numPages }: { numPages: number }) => {
+      renderedPagesRef.current.clear();
+      setLayerNumPages(numPages);
+      onLoad(file, numPages);
+    },
+    [file, onLoad]
+  );
+
+  const handlePageRender = useCallback(
+    (pageNum: number) => {
+      renderedPagesRef.current.add(pageNum);
+      if (
+        layerNumPages > 0 &&
+        renderedPagesRef.current.size === layerNumPages
+      ) {
+        onReady(file, layerNumPages);
+      }
+    },
+    [file, layerNumPages, onReady]
+  );
+
+  return (
+    <div
+      className={
+        isActive
+          ? "relative py-4"
+          : "invisible pointer-events-none absolute inset-x-0 top-0 py-4"
+      }
+      aria-hidden={!isActive}
+    >
+      <Document
+        file={file}
+        onLoadSuccess={handleLoad}
+        onLoadError={() => onError(file)}
+        loading={
+          isActive ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-accent" />
+            </div>
+          ) : null
+        }
+        error={
+          isActive ? (
+            <div className="flex items-center justify-center py-12">
+              <p className="text-sm text-error">Failed to load PDF</p>
+            </div>
+          ) : null
+        }
+      >
+        {Array.from({ length: layerNumPages }, (_, index) => {
+          const pageNum = index + 1;
+          return (
+            <div
+              key={`page_${pageNum}`}
+              ref={isActive ? (element) => setPageRef(pageNum, element) : undefined}
+              data-page-number={pageNum}
+              className="mb-3 flex justify-center"
+            >
+              <Page
+                pageNumber={pageNum}
+                width={pageWidth}
+                devicePixelRatio={devicePixelRatio}
+                renderTextLayer={true}
+                renderAnnotationLayer={true}
+                onRenderSuccess={() => handlePageRender(pageNum)}
+                loading={null}
+              />
+            </div>
+          );
+        })}
+      </Document>
+    </div>
+  );
+}
 
 // ─── PdfViewer ──────────────────────────────────────
 
 export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function PdfViewer({ pdfUrl, loading, onTextSelect }, ref) {
   const [numPages, setNumPages] = useState<number>(0);
   const [currentPage, setCurrentPage] = useState<number>(1);
-  const [documentVersion, setDocumentVersion] = useState<number>(0);
+  const [activePdfUrl, setActivePdfUrl] = useState<string | null>(pdfUrl);
+  const [pendingPdfUrl, setPendingPdfUrl] = useState<string | null>(null);
+  const [pdfRefreshError, setPdfRefreshError] = useState(false);
   const [zoom, setZoom] = useState<number>(1);
   const [containerWidth, setContainerWidth] = useState<number>(0);
   const containerRef = useRef<HTMLDivElement>(null);
   const pageRefs = useRef<Map<number, HTMLDivElement>>(new Map());
   const scrollPositionRef = useRef<{ ratio: number } | null>(null);
   const observerRef = useRef<IntersectionObserver | null>(null);
+  const resizeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const containerWidthRef = useRef(0);
 
   const zoomPercent = Math.round(zoom * 100);
 
@@ -80,27 +194,59 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
 
     const ro = new ResizeObserver((entries) => {
       for (const entry of entries) {
-        setContainerWidth(entry.contentRect.width);
+        const nextWidth = entry.contentRect.width;
+        if (Math.abs(nextWidth - containerWidthRef.current) < 1) continue;
+
+        if (containerWidthRef.current === 0) {
+          containerWidthRef.current = nextWidth;
+          setContainerWidth(nextWidth);
+          continue;
+        }
+
+        if (resizeTimeoutRef.current) {
+          clearTimeout(resizeTimeoutRef.current);
+        }
+        resizeTimeoutRef.current = setTimeout(() => {
+          containerWidthRef.current = nextWidth;
+          setContainerWidth(nextWidth);
+          resizeTimeoutRef.current = null;
+        }, RESIZE_DEBOUNCE_MS);
       }
     });
     ro.observe(container);
-    return () => ro.disconnect();
+    return () => {
+      ro.disconnect();
+      if (resizeTimeoutRef.current) {
+        clearTimeout(resizeTimeoutRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
-    observerRef.current?.disconnect();
-    pageRefs.current.clear();
-    setNumPages(0);
-    setCurrentPage(1);
-    setDocumentVersion((prev) => prev + 1);
-  }, [pdfUrl]);
+    setPdfRefreshError(false);
+    if (!pdfUrl) {
+      observerRef.current?.disconnect();
+      pageRefs.current.clear();
+      setActivePdfUrl(null);
+      setPendingPdfUrl(null);
+      setNumPages(0);
+      setCurrentPage(1);
+      return;
+    }
 
-  function onDocumentLoadSuccess({ numPages: n }: { numPages: number }) {
-    setNumPages(n);
+    if (!activePdfUrl) {
+      setActivePdfUrl(pdfUrl);
+      return;
+    }
 
+    if (pdfUrl !== activePdfUrl) {
+      setPendingPdfUrl(pdfUrl);
+    }
+  }, [activePdfUrl, pdfUrl]);
+
+  const restoreScrollPosition = useCallback(() => {
     if (scrollPositionRef.current && containerRef.current) {
       const { ratio } = scrollPositionRef.current;
-      // Attempt restore multiple times — pages may not be fully rendered yet
       let attempts = 0;
       const tryRestore = () => {
         const container = containerRef.current;
@@ -117,7 +263,42 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
       };
       requestAnimationFrame(tryRestore);
     }
-  }
+  }, []);
+
+  const handleDocumentLoad = useCallback(
+    (file: string, nextNumPages: number) => {
+      if (file === activePdfUrl) {
+        setNumPages(nextNumPages);
+      }
+    },
+    [activePdfUrl]
+  );
+
+  const handleDocumentReady = useCallback(
+    (file: string, nextNumPages: number) => {
+      if (file === pendingPdfUrl) {
+        pageRefs.current.clear();
+        setNumPages(nextNumPages);
+        setCurrentPage((page) => Math.min(page, nextNumPages));
+        setActivePdfUrl(file);
+        setPendingPdfUrl(null);
+        requestAnimationFrame(restoreScrollPosition);
+      } else if (file === activePdfUrl) {
+        restoreScrollPosition();
+      }
+    },
+    [activePdfUrl, pendingPdfUrl, restoreScrollPosition]
+  );
+
+  const handleDocumentError = useCallback(
+    (file: string) => {
+      if (file === pendingPdfUrl) {
+        setPendingPdfUrl(null);
+        setPdfRefreshError(true);
+      }
+    },
+    [pendingPdfUrl]
+  );
 
   // IntersectionObserver for page tracking
   const setPageRef = useCallback(
@@ -167,7 +348,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
     return () => {
       observerRef.current?.disconnect();
     };
-  }, [numPages]);
+  }, [activePdfUrl, numPages]);
 
   // Trackpad / Ctrl+Wheel zoom
   useEffect(() => {
@@ -285,7 +466,17 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
     }
   }
 
-  const pageWidth = containerWidth > 0 ? (containerWidth - 48) * zoom : undefined;
+  const pageWidth = containerWidth > 0
+    ? Math.max(containerWidth - 48, 200) * zoom
+    : undefined;
+  const devicePixelRatio = typeof window !== "undefined"
+    ? Math.min(Math.max(window.devicePixelRatio || 1, 1), 2)
+    : 2;
+  const documentUrls: string[] = [];
+  if (activePdfUrl) documentUrls.push(activePdfUrl);
+  if (pendingPdfUrl && pendingPdfUrl !== activePdfUrl) {
+    documentUrls.push(pendingPdfUrl);
+  }
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -394,7 +585,7 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
 
         {/* PDF Content */}
         <div className="relative flex-1 min-h-0 overflow-hidden">
-          {loading && (
+          {loading && !activePdfUrl && (
             <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-bg-tertiary/80">
               <div className="flex flex-col items-center gap-2 animate-fade-in">
                 <Loader2 className="h-6 w-6 animate-spin text-accent" />
@@ -403,8 +594,32 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
             </div>
           )}
 
+          {!loading && pdfUrl && !activePdfUrl && (
+            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center bg-bg-tertiary">
+              <div className="flex flex-col items-center gap-2">
+                <Loader2 className="h-6 w-6 animate-spin text-accent" />
+                <span className="text-xs text-text-muted">Rendering preview...</span>
+              </div>
+            </div>
+          )}
+
+          {activePdfUrl && (loading || pendingPdfUrl) && (
+            <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-2 rounded-md border border-border bg-bg-secondary/95 px-2.5 py-1.5 shadow-sm">
+              <Loader2 className="h-3.5 w-3.5 animate-spin text-accent" />
+              <span className="text-xs text-text-muted">
+                {pendingPdfUrl ? "Rendering preview..." : "Compiling..."}
+              </span>
+            </div>
+          )}
+
+          {activePdfUrl && pdfRefreshError && (
+            <div className="pointer-events-none absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-md border border-error/30 bg-bg-secondary/95 px-3 py-1.5 text-xs text-error shadow-sm">
+              Could not refresh the PDF preview. The previous version is still shown.
+            </div>
+          )}
+
           <div ref={containerRef} className="h-full min-h-0 overflow-auto overscroll-contain">
-            {!pdfUrl && !loading && (
+            {!activePdfUrl && !pdfUrl && !loading && (
               <div className="flex h-full items-center justify-center animate-fade-in">
                 <div className="flex flex-col items-center gap-3 px-4 text-center">
                   <div className="flex h-14 w-14 items-center justify-center rounded-full bg-bg-elevated">
@@ -422,47 +637,21 @@ export const PdfViewer = forwardRef<PdfViewerHandle, PdfViewerProps>(function Pd
               </div>
             )}
 
-            {pdfUrl && (
-              <div className="py-4">
-                <Document
-                  key={`pdf-document-${documentVersion}`}
-                  file={pdfUrl}
-                  onLoadSuccess={onDocumentLoadSuccess}
-                  loading={
-                    <div className="flex items-center justify-center py-12">
-                      <Loader2 className="h-6 w-6 animate-spin text-accent" />
-                    </div>
-                  }
-                  error={
-                    <div className="flex items-center justify-center py-12">
-                      <p className="text-sm text-error">Failed to load PDF</p>
-                    </div>
-                  }
-                >
-                  {Array.from(new Array(numPages), (_, index) => {
-                    const pageNum = index + 1;
-                    return (
-                      <div
-                        key={`page_${pageNum}`}
-                        ref={(el) => setPageRef(pageNum, el)}
-                        data-page-number={pageNum}
-                        className="mb-3 flex justify-center"
-                      >
-                        <Page
-                          pageNumber={pageNum}
-                          width={pageWidth}
-                          devicePixelRatio={
-                            typeof window !== "undefined"
-                              ? Math.max(window.devicePixelRatio || 1, 2)
-                              : 2
-                          }
-                          renderTextLayer={true}
-                          renderAnnotationLayer={true}
-                        />
-                      </div>
-                    );
-                  })}
-                </Document>
+            {activePdfUrl && (
+              <div className="relative min-h-full">
+                {documentUrls.map((file) => (
+                  <PdfDocumentLayer
+                    key={file}
+                    file={file}
+                    isActive={file === activePdfUrl}
+                    pageWidth={pageWidth}
+                    devicePixelRatio={devicePixelRatio}
+                    onLoad={handleDocumentLoad}
+                    onReady={handleDocumentReady}
+                    onError={handleDocumentError}
+                    setPageRef={setPageRef}
+                  />
+                ))}
               </div>
             )}
           </div>

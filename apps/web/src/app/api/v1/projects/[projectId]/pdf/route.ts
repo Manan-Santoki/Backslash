@@ -45,7 +45,10 @@ export async function GET(
       if (!exists) {
         return NextResponse.json(
           { error: "PDF not found. Please compile the project first." },
-          { status: 404 }
+          {
+            status: 404,
+            headers: { "Cache-Control": "private, no-store, max-age=0" },
+          }
         );
       }
 
@@ -58,6 +61,7 @@ export async function GET(
           "Content-Type": "application/pdf",
           "Content-Disposition": `attachment; filename="${pdfName}"`,
           "Content-Length": pdfBuffer.length.toString(),
+          "Cache-Control": "private, no-store, max-age=0",
         },
       });
     } catch (error) {

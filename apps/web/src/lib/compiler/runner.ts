@@ -14,6 +14,7 @@ import {
 } from "@/lib/db/compat";
 import { getProjectDir, getPdfPath, fileExists } from "@/lib/storage";
 import { runCompileContainer } from "./docker";
+import { findGeneratedPdf } from "./artifacts";
 import { parseLatexLog } from "./logParser";
 import { injectMissingPackages } from "./preamble";
 import { broadcastBuildUpdate } from "@/lib/websocket/server";
@@ -248,18 +249,18 @@ class CompileRunner {
       const pdfOutputPath = getPdfPath(storageUserId, projectId, mainFile);
 
       if (!containerResult.canceled) {
-        // Check for PDF in the build directory
-        const pdfName = mainFile.replace(/\.tex$/, ".pdf");
-        const buildPdfPath = path.join(buildDir, pdfName);
-        const pdfInBuild = await fileExists(buildPdfPath);
+        const buildPdfPath = await findGeneratedPdf(
+          buildDir,
+          mainFile,
+          containerResult.logs
+        );
 
-        // Copy PDF back to project directory if it was generated
-        if (pdfInBuild) {
+        // Copy the PDF latexmk actually generated back to its canonical path.
+        if (buildPdfPath) {
           await fs.mkdir(path.dirname(pdfOutputPath), { recursive: true });
           await fs.copyFile(buildPdfPath, pdfOutputPath);
+          pdfExists = await fileExists(pdfOutputPath);
         }
-
-        pdfExists = await fileExists(pdfOutputPath);
       }
 
       // Determine final status

@@ -2,7 +2,9 @@ import { Queue, Worker } from "bullmq";
 import IORedis, { type RedisOptions } from "ioredis";
 import { LIMITS } from "@backslash/shared";
 import fs from "fs/promises";
+import path from "path";
 
+import { findGeneratedPdf } from "./artifacts";
 import { runCompileContainer } from "./docker";
 import { parseLatexLog } from "./logParser";
 import {
@@ -205,10 +207,25 @@ class AsyncCompileRunner {
       const errorsFile = await writeAsyncCompileErrors(jobId, parsedEntries);
 
       const pdfPath = getAsyncCompilePdfPath(jobId, mainFile);
-      const pdfExists = await fs
-        .access(pdfPath)
-        .then(() => true)
-        .catch(() => false);
+      let pdfExists = false;
+      if (!containerResult.canceled) {
+        const generatedPdfPath = await findGeneratedPdf(
+          jobDir,
+          mainFile,
+          containerResult.logs
+        );
+
+        if (generatedPdfPath) {
+          await fs.mkdir(path.dirname(pdfPath), { recursive: true });
+          if (path.resolve(generatedPdfPath) !== path.resolve(pdfPath)) {
+            await fs.copyFile(generatedPdfPath, pdfPath);
+          }
+          pdfExists = await fs
+            .access(pdfPath)
+            .then(() => true)
+            .catch(() => false);
+        }
+      }
 
       let finalStatus: "success" | "error" | "timeout" | "canceled";
       if (containerResult.canceled) {
@@ -226,7 +243,9 @@ class AsyncCompileRunner {
         engineUsed: containerResult.engineUsed,
         logsPath: logsFile,
         errorsPath: errorsFile,
-        pdfPath: pdfExists ? "main.pdf" : undefined,
+        pdfPath: pdfExists
+          ? path.relative(jobDir, pdfPath).replace(/\\/g, "/")
+          : undefined,
         errorCount,
         warningCount,
         durationMs,

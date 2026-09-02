@@ -84,6 +84,7 @@ export async function GET(
             "Content-Type": "application/pdf",
             "Content-Disposition": 'inline; filename="output.pdf"',
             "Content-Length": String(pdfBuffer.length),
+            "Cache-Control": "private, no-store, max-age=0",
             "X-Compile-Duration-Ms": String(meta.durationMs ?? 0),
             "X-Compile-Engine": meta.engineUsed ?? "unknown",
             "X-Compile-Warnings": String(meta.warningCount),
