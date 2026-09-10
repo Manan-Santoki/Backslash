@@ -3,9 +3,11 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
+import { useDemo } from "@/hooks/useDemo";
 
 export default function RegisterPage() {
   const router = useRouter();
+  const demo = useDemo();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -44,6 +46,14 @@ export default function RegisterPage() {
       <h1 className="mb-6 text-2xl font-bold text-text-primary">
         Create your account
       </h1>
+
+      {demo?.demo && (
+        <div className="mb-4 rounded-lg border border-accent/20 bg-accent/5 px-4 py-3 text-xs text-text-secondary">
+          This is a live demo. Everything works, but your account and projects
+          are deleted automatically after {demo.ttlHours ?? 2} hours of
+          inactivity.
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 rounded-lg bg-error/10 px-4 py-3 text-sm text-error">

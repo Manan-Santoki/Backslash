@@ -6,6 +6,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { randomBytes } from "crypto";
+import { demoDisabledResponse, isFeatureDisabled } from "@/lib/demo";
 
 const updateShareLinkSchema = z.object({
   enabled: z.boolean(),
@@ -90,6 +91,19 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
+  if (isFeatureDisabled("sharing")) {
+    return NextResponse.json({
+      share: {
+        enabled: false,
+        role: "viewer",
+        expiresAt: null,
+        token: null,
+        url: null,
+      },
+      demoDisabled: true,
+    });
+  }
+
   return withAuth(request, async (_req, user) => {
     try {
       const { projectId } = await params;
@@ -132,6 +146,10 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
+  if (isFeatureDisabled("sharing")) {
+    return demoDisabledResponse("sharing");
+  }
+
   return withAuth(request, async (req, user) => {
     try {
       const { projectId } = await params;

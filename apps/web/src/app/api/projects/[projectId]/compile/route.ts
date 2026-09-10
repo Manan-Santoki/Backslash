@@ -12,6 +12,7 @@ import { eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { v4 as uuidv4 } from "uuid";
 import type { Engine } from "@backslash/shared";
+import { checkDemoCompileAllowance, demoBlockResponse } from "@/lib/demo";
 
 const VALID_ENGINES: Engine[] = [
   "auto",
@@ -44,6 +45,14 @@ export async function POST(
         { error: "Permission denied" },
         { status: 403 }
       );
+    }
+
+    // Demo mode: refuse before doing any work (or writing a build row).
+    if (access.user) {
+      const demoBlock = await checkDemoCompileAllowance(access.user.id);
+      if (demoBlock) {
+        return demoBlockResponse(demoBlock);
+      }
     }
 
     const project = access.project;

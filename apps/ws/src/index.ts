@@ -96,6 +96,10 @@ const DATABASE_URL =
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 const SESSION_SECRET = process.env.SESSION_SECRET || "change-me-to-a-random-64-char-string";
 
+// Hosted demo mode: public share links are switched off, so anonymous socket
+// handshakes are refused. Self-hosted deployments are unaffected.
+const DEMO_MODE = process.env.DEMO_MODE === "true";
+
 // ─── Presence Colors ───────────────────────────────
 
 const PRESENCE_COLORS = [
@@ -374,8 +378,9 @@ io.use(async (socket, next) => {
     // Extract session token from cookie header or auth query param
     const cookieHeader = socket.handshake.headers.cookie;
     let token = extractCookieToken(cookieHeader);
-    const shareToken =
-      (socket.handshake.auth?.shareToken as string | undefined) ?? null;
+    const shareToken = DEMO_MODE
+      ? null
+      : (socket.handshake.auth?.shareToken as string | undefined) ?? null;
 
     // Fallback: check query param (for environments where cookies aren't forwarded)
     if (!token && socket.handshake.auth?.token) {

@@ -4,6 +4,7 @@ import { checkProjectAccess } from "@/lib/db/queries/projects";
 import { validateSession } from "@/lib/auth/session";
 import { and, eq, gt, isNull, or } from "drizzle-orm";
 import type { NextRequest } from "next/server";
+import { isFeatureDisabled } from "@/lib/demo";
 
 type AccessRole = "owner" | "viewer" | "editor";
 
@@ -50,6 +51,10 @@ async function resolvePublicShareAccess(
   projectId: string,
   shareToken: string
 ): Promise<ProjectAccessContext | ProjectAccessError> {
+  if (isFeatureDisabled("sharing")) {
+    return { access: false, status: 404, error: "Project not found" };
+  }
+
   const [publicShare] = await db
     .select({
       role: projectPublicShares.role,

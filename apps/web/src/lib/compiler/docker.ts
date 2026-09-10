@@ -3,6 +3,7 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { ENGINE_FLAGS, LIMITS } from "@backslash/shared";
 import type { Engine } from "@backslash/shared";
+import { demoConfig } from "@/lib/demo/config";
 
 // ─── Docker Client ─────────────────────────────────
 
@@ -21,11 +22,16 @@ export function getDockerClient(): Docker {
 
 const COMPILER_IMAGE = process.env.COMPILER_IMAGE || "backslash-compiler";
 
-const COMPILE_TIMEOUT = parseInt(
+const BASE_COMPILE_TIMEOUT = parseInt(
   process.env.COMPILE_TIMEOUT ||
     String(LIMITS.COMPILE_TIMEOUT_DEFAULT),
   10
 );
+
+// Demo mode caps how long a single build may run, regardless of COMPILE_TIMEOUT.
+const COMPILE_TIMEOUT = demoConfig.enabled
+  ? Math.min(BASE_COMPILE_TIMEOUT, demoConfig.maxCompileTimeoutSeconds)
+  : BASE_COMPILE_TIMEOUT;
 
 const COMPILE_MEMORY = process.env.COMPILE_MEMORY ||
   LIMITS.COMPILE_MEMORY_DEFAULT;

@@ -9,6 +9,7 @@ import { findUserByEmail } from "@/lib/db/queries/users";
 import { eq, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { demoDisabledResponse, isFeatureDisabled } from "@/lib/demo";
 
 const shareSchema = z.object({
   email: z.string().email("Invalid email address"),
@@ -30,6 +31,14 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
+  if (isFeatureDisabled("sharing")) {
+    return NextResponse.json({
+      owner: null,
+      collaborators: [],
+      demoDisabled: true,
+    });
+  }
+
   return withAuth(request, async (_req, user) => {
     try {
       const { projectId } = await params;
@@ -83,6 +92,10 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string }> }
 ) {
+  if (isFeatureDisabled("sharing")) {
+    return demoDisabledResponse("sharing");
+  }
+
   return withAuth(request, async (req, user) => {
     try {
       const { projectId } = await params;

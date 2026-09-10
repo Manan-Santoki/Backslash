@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { apiKeys, users } from "@/lib/db/schema";
 import { eq, and, gt, or, isNull, sql } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { demoDisabledResponse, isFeatureDisabled } from "@/lib/demo";
 
 // ─── Key Generation ─────────────────────────────────
 
@@ -100,6 +101,10 @@ export async function withApiKey(
   request: NextRequest,
   handler: (req: NextRequest, user: ApiKeyUser) => Promise<NextResponse>
 ): Promise<NextResponse> {
+  if (isFeatureDisabled("api")) {
+    return demoDisabledResponse("api");
+  }
+
   const authHeader = request.headers.get("authorization");
 
   if (!authHeader || !authHeader.startsWith("Bearer ")) {

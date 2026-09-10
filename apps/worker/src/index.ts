@@ -29,8 +29,14 @@ type AsyncCompileRunnerModule = {
   } | null;
 };
 
+type DemoReaperModule = {
+  startDemoReaper: () => void;
+  shutdownDemoReaper: () => void;
+};
+
 let shutdownRunnerRef: (() => Promise<void>) | null = null;
 let shutdownAsyncCompileRunnerRef: (() => Promise<void>) | null = null;
+let shutdownDemoReaperRef: (() => void) | null = null;
 let healthTimer: ReturnType<typeof setInterval> | null = null;
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -78,6 +84,15 @@ async function bootstrap() {
   asyncCompileRunnerModule.startAsyncCompileRunner();
   shutdownRunnerRef = runnerModule.shutdownRunner;
   shutdownAsyncCompileRunnerRef = asyncCompileRunnerModule.shutdownAsyncCompileRunner;
+
+  // Hosted demo mode: reclaim idle accounts and their storage.
+  if (process.env.DEMO_MODE === "true") {
+    const demoReaperModule = await import(
+      "../../web/src/lib/demo/cleanup"
+    ) as DemoReaperModule;
+    demoReaperModule.startDemoReaper();
+    shutdownDemoReaperRef = demoReaperModule.shutdownDemoReaper;
+  }
 
   await publishHeartbeat();
   heartbeatTimer = setInterval(() => {
@@ -132,6 +147,9 @@ async function gracefulShutdown(signal: string) {
   }
   if (shutdownAsyncCompileRunnerRef) {
     await shutdownAsyncCompileRunnerRef();
+  }
+  if (shutdownDemoReaperRef) {
+    shutdownDemoReaperRef();
   }
   process.exit(0);
 }

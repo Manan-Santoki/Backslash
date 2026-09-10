@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────
+# Hosted demo mode
+#
+#   docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+#
+# Turns this deployment into a public demo: visitors can sign up and use the
+# full editor with real LaTeX compiles, but every account is temporary and the
+# expensive surfaces (public REST API, AI, sharing) are switched off.
+#
+# Self-hosting normally? You do not need this file — leave DEMO_MODE unset.
+# ─────────────────────────────────────────────────────────────
+services:
+  app:
+    environment:
+      - DEMO_MODE=true
+      - DEMO_TTL_HOURS=${DEMO_TTL_HOURS:-2}
+      - DEMO_SESSION_HOURS=${DEMO_SESSION_HOURS:-2}
+      - DEMO_SWEEP_INTERVAL_MINUTES=${DEMO_SWEEP_INTERVAL_MINUTES:-15}
+      - DEMO_COMPILES_PER_HOUR=${DEMO_COMPILES_PER_HOUR:-10}
+      - DEMO_GLOBAL_COMPILES_PER_DAY=${DEMO_GLOBAL_COMPILES_PER_DAY:-500}
+      - DEMO_MAX_QUEUE_DEPTH=${DEMO_MAX_QUEUE_DEPTH:-3}
+      - DEMO_MAX_CONCURRENT_PER_USER=${DEMO_MAX_CONCURRENT_PER_USER:-2}
+      - DEMO_MAX_COMPILE_TIMEOUT=${DEMO_MAX_COMPILE_TIMEOUT:-60}
+      - DEMO_MAX_USERS=${DEMO_MAX_USERS:-2000}
+      - DEMO_SIGNUPS_PER_IP_HOUR=${DEMO_SIGNUPS_PER_IP_HOUR:-5}
+      - DEMO_LOGINS_PER_IP_15MIN=${DEMO_LOGINS_PER_IP_15MIN:-20}
+      - DEMO_EXEMPT_EMAILS=${DEMO_EXEMPT_EMAILS:-}
+      # Compile runners belong to the worker only — running them in both
+      # processes would silently double the effective concurrency.
+      - RUN_COMPILE_RUNNER_IN_WEB=false
+      - MAX_CONCURRENT_BUILDS=${MAX_CONCURRENT_BUILDS:-2}
+      - COMPILE_TIMEOUT=${COMPILE_TIMEOUT:-45}
+      - COMPILE_MEMORY=${COMPILE_MEMORY:-1g}
+      - COMPILE_CPUS=${COMPILE_CPUS:-1}
+      - ASYNC_COMPILE_MAX_CONCURRENT_BUILDS=${ASYNC_COMPILE_MAX_CONCURRENT_BUILDS:-1}
+
+  worker:
+    environment:
+      - DEMO_MODE=true
+      - DEMO_TTL_HOURS=${DEMO_TTL_HOURS:-2}
+      - DEMO_SESSION_HOURS=${DEMO_SESSION_HOURS:-2}
+      - DEMO_SWEEP_INTERVAL_MINUTES=${DEMO_SWEEP_INTERVAL_MINUTES:-15}
+      - DEMO_EXEMPT_EMAILS=${DEMO_EXEMPT_EMAILS:-}
+      - MAX_CONCURRENT_BUILDS=${MAX_CONCURRENT_BUILDS:-2}
+      - COMPILE_TIMEOUT=${COMPILE_TIMEOUT:-45}
+      - COMPILE_MEMORY=${COMPILE_MEMORY:-1g}
+      - COMPILE_CPUS=${COMPILE_CPUS:-1}
+      - ASYNC_COMPILE_MAX_CONCURRENT_BUILDS=${ASYNC_COMPILE_MAX_CONCURRENT_BUILDS:-1}
+
+  ws:
+    environment:
+      - DEMO_MODE=true

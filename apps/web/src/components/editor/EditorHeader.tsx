@@ -15,6 +15,7 @@ import {
   Check,
   Ban,
 } from "lucide-react";
+import { useDemoDisabled } from "@/hooks/useDemo";
 import {
   Tooltip,
   TooltipTrigger,
@@ -140,6 +141,7 @@ export function EditorHeader({
   canEdit = true,
 }: EditorHeaderProps) {
   const [shareOpen, setShareOpen] = useState(false);
+  const sharingDisabled = useDemoDisabled("sharing");
   const [projects, setProjects] = useState<ProjectListItem[]>([]);
   const [sharedProjects, setSharedProjects] = useState<ProjectListItem[]>([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
@@ -376,7 +378,7 @@ export function EditorHeader({
       />
 
       {/* Share button */}
-      {canManageShare && (
+      {canManageShare && !sharingDisabled && (
         <TooltipProvider delayDuration={300}>
           <Tooltip>
             <TooltipTrigger asChild>
@@ -435,7 +437,7 @@ export function EditorHeader({
     </AppHeader>
 
     {/* Share Dialog */}
-    {canManageShare && (
+    {canManageShare && !sharingDisabled && (
       <ShareDialog
         projectId={projectId}
         projectName={projectName}

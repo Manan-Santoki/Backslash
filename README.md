@@ -477,6 +477,62 @@ New projects can be initialized from the following built-in templates:
 
 ---
 
+## 🧪 Hosted Demo Mode
+
+Running a public instance where anyone can sign up? Set `DEMO_MODE=true` and the whole
+deployment becomes a **demo**: visitors get the complete product experience — real accounts, the
+full editor, real TeX Live compiles, live PDF preview — but nothing is durable and the expensive
+surfaces are closed off, so it cannot be used as a free unlimited service.
+
+```bash
+cp .env.demo.example .env
+# set SESSION_SECRET, APP_URL and SECURE_COOKIES in .env
+docker compose -f docker-compose.yml -f docker-compose.demo.yml up -d
+```
+
+Self-hosting for yourself? Do nothing — `DEMO_MODE` defaults to off and the app behaves exactly
+as it always has. None of the limits below apply.
+
+### What demo mode changes
+
+| Area | Behaviour |
+|---|---|
+| Accounts | Open signup (the normal flow), but every account is temporary. |
+| Data | A background reaper deletes accounts, projects, files and builds after `DEMO_TTL_HOURS` of inactivity. Anyone with a live session is never touched. |
+| Sessions | Short-lived (`DEMO_SESSION_HOURS`) instead of the usual 7 days. |
+| Compiles | Real containers, capped: per-visitor hourly limit, per-visitor concurrency, global daily budget, queue-depth shedding, and a lower timeout ceiling. |
+| Public REST API | Disabled — `/api/v1/*` and API keys return `403 demo_disabled`. |
+| AI | Disabled — build fixes and the LaTeX writer return `403`. |
+| Sharing | Disabled — collaborator invites and public share links return `403`. |
+| Abuse control | Per-IP limits on signup and sign-in, plus a hard cap on total accounts. |
+| Password reset | Still works (configure SMTP if you want the mail actually delivered). |
+
+The UI adapts automatically: a demo banner, no Developers/API Keys entry, no AI section, no Share
+button, and compile limits are reported as limits rather than build errors.
+
+### Limits
+
+Every value is configurable — see [`.env.demo.example`](./.env.demo.example) for the full list.
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DEMO_TTL_HOURS` | `2` | Idle hours before an account and its files are deleted |
+| `DEMO_SESSION_HOURS` | `2` | Demo session lifetime |
+| `DEMO_COMPILES_PER_HOUR` | `10` | Compiles per visitor per hour |
+| `DEMO_GLOBAL_COMPILES_PER_DAY` | `500` | Instance-wide daily compile budget |
+| `DEMO_MAX_CONCURRENT_PER_USER` | `2` | Builds a single visitor may have in flight |
+| `DEMO_MAX_QUEUE_DEPTH` | `3` | Sheds load when the queue is longer than this |
+| `DEMO_MAX_COMPILE_TIMEOUT` | `60` | Hard ceiling on a single compile (seconds) |
+| `DEMO_MAX_USERS` | `2000` | Total accounts allowed |
+| `DEMO_SIGNUPS_PER_IP_HOUR` | `5` | Signups per IP per hour |
+| `DEMO_LOGINS_PER_IP_15MIN` | `20` | Sign-in attempts per IP per 15 minutes |
+| `DEMO_EXEMPT_EMAILS` | — | Comma-separated accounts the reaper never deletes |
+
+> **Before going public:** set a unique `SESSION_SECRET` (the built-in fallback is public
+> knowledge) and `SECURE_COOKIES=true` behind TLS.
+
+---
+
 ## ⌨️ Keyboard Shortcuts
 
 | Shortcut | Action |

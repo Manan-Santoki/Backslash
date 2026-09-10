@@ -17,6 +17,16 @@ export async function register() {
           err instanceof Error ? err.message : err
         );
       }
+
+      try {
+        const { startDemoReaper } = await import("@/lib/demo/cleanup");
+        startDemoReaper();
+      } catch (err) {
+        console.error(
+          "[Instrumentation] Failed to start demo reaper:",
+          err instanceof Error ? err.message : err
+        );
+      }
     } else {
       console.log(
         "[Instrumentation] Compile runner disabled in web (RUN_COMPILE_RUNNER_IN_WEB=false)"

@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { builds, projectFiles, projectPublicShares, projects } from "@/lib/db/schema";
 import { and, desc, eq, gt, isNull, or } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { demoDisabledResponse, isFeatureDisabled } from "@/lib/demo";
 
 // GET /api/share/[token]
 // Resolve a public share token to project data for anonymous editor access.
@@ -9,6 +10,10 @@ export async function GET(
   _request: NextRequest,
   { params }: { params: Promise<{ token: string }> }
 ) {
+  if (isFeatureDisabled("sharing")) {
+    return demoDisabledResponse("sharing");
+  }
+
   try {
     const { token } = await params;
 

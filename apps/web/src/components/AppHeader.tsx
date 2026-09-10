@@ -26,6 +26,8 @@ import {
   TooltipContent,
   TooltipProvider,
 } from "@/components/ui/tooltip";
+import { DemoBanner } from "@/components/DemoBanner";
+import { useDemoDisabled } from "@/hooks/useDemo";
 
 // ─── Types ──────────────────────────────────────────
 
@@ -46,6 +48,7 @@ interface AppHeaderProps {
 export function AppHeader({ children, leftContent, className }: AppHeaderProps) {
   const [user, setUser] = useState<UserInfo | null>(null);
   const { theme, toggleTheme } = useTheme();
+  const apiDisabled = useDemoDisabled("api");
 
   useEffect(() => {
     async function fetchUser() {
@@ -161,14 +164,16 @@ export function AppHeader({ children, leftContent, className }: AppHeaderProps) 
                 <LayoutDashboard className="h-4 w-4" />
                 <span>Dashboard</span>
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onClick={() => {
-                  window.location.href = "/dashboard/developers";
-                }}
-              >
-                <Key className="h-4 w-4" />
-                <span>API Keys</span>
-              </DropdownMenuItem>
+              {!apiDisabled && (
+                <DropdownMenuItem
+                  onClick={() => {
+                    window.location.href = "/dashboard/developers";
+                  }}
+                >
+                  <Key className="h-4 w-4" />
+                  <span>API Keys</span>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 onClick={() => {
                   window.location.href = "/dashboard/settings";
@@ -186,6 +191,7 @@ export function AppHeader({ children, leftContent, className }: AppHeaderProps) 
           </DropdownMenu>
         </div>
       </div>
+      <DemoBanner />
     </TooltipProvider>
   );
 }

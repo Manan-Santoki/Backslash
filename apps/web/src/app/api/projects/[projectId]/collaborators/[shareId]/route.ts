@@ -5,6 +5,7 @@ import { checkProjectAccess } from "@/lib/db/queries/projects";
 import { and, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { demoDisabledResponse, isFeatureDisabled } from "@/lib/demo";
 
 const updateShareSchema = z.object({
   role: z.enum(["viewer", "editor"]),
@@ -17,6 +18,10 @@ export async function PUT(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; shareId: string }> }
 ) {
+  if (isFeatureDisabled("sharing")) {
+    return demoDisabledResponse("sharing");
+  }
+
   return withAuth(request, async (req, user) => {
     try {
       const { projectId, shareId } = await params;
@@ -77,6 +82,10 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ projectId: string; shareId: string }> }
 ) {
+  if (isFeatureDisabled("sharing")) {
+    return demoDisabledResponse("sharing");
+  }
+
   return withAuth(request, async (_req, user) => {
     try {
       const { projectId, shareId } = await params;

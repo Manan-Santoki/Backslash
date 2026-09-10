@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from "next/server";
 import path from "path";
 import { enqueueCompileJob } from "@/lib/compiler/compileQueue";
 import { v4 as uuidv4 } from "uuid";
+import { checkDemoCompileAllowance, type DemoBlock } from "@/lib/demo";
 
 // ─── GET /api/projects/[projectId]/files/[fileId] ──
 // Get file metadata and content.
@@ -170,6 +171,7 @@ export async function PUT(
       .where(eq(projects.id, projectId));
 
     let buildQueued = false;
+    let demoLimited: DemoBlock | null = null;
 
     const storageUserId = project.userId;
     const actorUserId = access.user?.id ?? null;
@@ -177,34 +179,43 @@ export async function PUT(
 
     // If autoCompile is true, create a build record and enqueue compile job
     if (autoCompile) {
-      const buildId = uuidv4();
+      const demoBlock = actorUserId
+        ? await checkDemoCompileAllowance(actorUserId)
+        : null;
 
-      await db.insert(builds).values({
-        id: buildId,
-        projectId,
-        userId: buildUserId,
-        status: "queued",
-        engine: project.engine,
-      });
+      // The save itself still succeeded — only the automatic rebuild was refused.
+      if (demoBlock) {
+        demoLimited = demoBlock;
+      } else {
+        const buildId = uuidv4();
 
-      await enqueueCompileJob({
-        buildId,
-        projectId,
-        userId: buildUserId,
-        storageUserId,
-        triggeredByUserId: actorUserId,
-        engine: project.engine,
-        mainFile: project.mainFile,
-      });
+        await db.insert(builds).values({
+          id: buildId,
+          projectId,
+          userId: buildUserId,
+          status: "queued",
+          engine: project.engine,
+        });
 
-      broadcastBuildUpdate(buildUserId, {
-        projectId,
-        buildId,
-        status: "queued",
-        triggeredByUserId: actorUserId,
-      });
+        await enqueueCompileJob({
+          buildId,
+          projectId,
+          userId: buildUserId,
+          storageUserId,
+          triggeredByUserId: actorUserId,
+          engine: project.engine,
+          mainFile: project.mainFile,
+        });
 
-      buildQueued = true;
+        broadcastBuildUpdate(buildUserId, {
+          projectId,
+          buildId,
+          status: "queued",
+          triggeredByUserId: actorUserId,
+        });
+
+        buildQueued = true;
+      }
     }
 
     // Broadcast file save to collaborators
@@ -219,6 +230,7 @@ export async function PUT(
     return NextResponse.json({
       file: updatedFile,
       buildQueued,
+      ...(demoLimited ? { demoLimited } : {}),
     });
   } catch (error) {
     console.error("Error updating file:", error);

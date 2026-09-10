@@ -40,6 +40,25 @@ export const LIMITS = {
   MAX_CONCURRENT_BUILDS_DEFAULT: 5,
 } as const;
 
+/**
+ * Defaults for hosted demo mode (DEMO_MODE=true). Every value can be overridden
+ * with the matching DEMO_* environment variable. Ignored entirely when demo mode
+ * is off, which is the default for self-hosted deployments.
+ */
+export const DEMO_LIMITS = {
+  TTL_HOURS_DEFAULT: 2,
+  SESSION_HOURS_DEFAULT: 2,
+  SWEEP_INTERVAL_MINUTES_DEFAULT: 15,
+  COMPILES_PER_HOUR_DEFAULT: 10,
+  GLOBAL_COMPILES_PER_DAY_DEFAULT: 500,
+  MAX_QUEUE_DEPTH_DEFAULT: 3,
+  MAX_CONCURRENT_PER_USER_DEFAULT: 2,
+  MAX_COMPILE_TIMEOUT_SECONDS_DEFAULT: 60,
+  MAX_USERS_DEFAULT: 2000,
+  SIGNUPS_PER_IP_HOUR_DEFAULT: 5,
+  LOGINS_PER_IP_15MIN_DEFAULT: 20,
+} as const;
+
 export const MIME_TYPES: Record<string, string> = {
   ".tex": "text/x-tex",
   ".bib": "text/x-bibtex",

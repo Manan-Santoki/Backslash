@@ -11,6 +11,7 @@ import { desc, eq } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import path from "path";
+import { demoDisabledResponse, isFeatureDisabled } from "@/lib/demo";
 
 const requestSchema = z.object({
   projectId: z.string().uuid(),
@@ -137,6 +138,10 @@ async function triggerCompileViaExistingApi(
 }
 
 export async function POST(request: NextRequest) {
+  if (isFeatureDisabled("ai")) {
+    return demoDisabledResponse("ai");
+  }
+
   return withAuth(request, async (req, user) => {
     let body: unknown = {};
     try {

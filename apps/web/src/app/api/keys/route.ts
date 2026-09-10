@@ -5,6 +5,7 @@ import { generateApiKey } from "@/lib/auth/apikey";
 import { eq, desc } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { demoDisabledResponse, isFeatureDisabled } from "@/lib/demo";
 
 const createApiKeySchema = z.object({
   name: z.string().min(1, "Name is required").max(100, "Name is too long"),
@@ -15,6 +16,10 @@ const createApiKeySchema = z.object({
 // List all API keys for the authenticated user.
 
 export async function GET(request: NextRequest) {
+  if (isFeatureDisabled("api")) {
+    return demoDisabledResponse("api");
+  }
+
   return withAuth(request, async (_req, user) => {
     try {
       const keys = await db
@@ -46,6 +51,10 @@ export async function GET(request: NextRequest) {
 // Create a new API key. The full key is returned only once.
 
 export async function POST(request: NextRequest) {
+  if (isFeatureDisabled("api")) {
+    return demoDisabledResponse("api");
+  }
+
   return withAuth(request, async (req, user) => {
     try {
       const body = await req.json();

@@ -3,6 +3,7 @@ import { apiKeys } from "@/lib/db/schema";
 import { withAuth } from "@/lib/auth/middleware";
 import { eq, and } from "drizzle-orm";
 import { NextRequest, NextResponse } from "next/server";
+import { demoDisabledResponse, isFeatureDisabled } from "@/lib/demo";
 
 // ─── DELETE /api/keys/[keyId] ───────────────────────
 // Delete (revoke) an API key.
@@ -11,6 +12,10 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ keyId: string }> }
 ) {
+  if (isFeatureDisabled("api")) {
+    return demoDisabledResponse("api");
+  }
+
   return withAuth(request, async (_req, user) => {
     try {
       const { keyId } = await params;

@@ -171,6 +171,7 @@ export function EditorLayout({
   const [fixingWithAi, setFixingWithAi] = useState(false);
   const [aiFixEnabled, setAiFixEnabled] = useState(false);
   const [buildLogsExpanded, setBuildLogsExpanded] = useState(true);
+  const [demoNotice, setDemoNotice] = useState<string | null>(null);
   const [pdfLoading, setPdfLoading] = useState(false);
 
   // Disable auto-compile if last build failed (prevents rebuild loop on refresh)
@@ -397,6 +398,34 @@ export function EditorLayout({
     clearAllPolling();
   }, [clearAllPolling]);
 
+  /**
+   * Demo instances may refuse a compile with 429/503. That is a usage limit,
+   * not a LaTeX failure, so it is reported separately and must never be
+   * treated as a build error (which would disable auto-compile and trigger
+   * recompile chains).
+   */
+  const reportDemoLimit = useCallback(async (res: Response): Promise<boolean> => {
+    if (res.status !== 429 && res.status !== 503) return false;
+
+    let message =
+      res.status === 429
+        ? "Demo compile limit reached. Try again later, or self-host Backslash for unlimited builds."
+        : "The demo is busy right now — try again in a moment.";
+
+    try {
+      const data = await res.json();
+      if (typeof data?.error === "string" && data.error.length > 0) {
+        message = data.error;
+      }
+    } catch {
+      // Keep the default message.
+    }
+
+    setDemoNotice(message);
+    setBuildStatus("idle");
+    return true;
+  }, []);
+
   const applyChangesToCache = useCallback(
     (fileId: string, changes: DocChange[]) => {
       const cached = fileContentsRef.current.get(fileId);
@@ -508,12 +537,15 @@ export function EditorLayout({
               fetch(withShareToken(`/api/projects/${project.id}/compile`), {
                 method: "POST",
               })
-                .then((res) => {
+                .then(async (res) => {
                   if (res.ok) {
                     startBuildPolling();
                   } else {
+                    // A demo limit must not chain into another attempt.
+                    if (!(await reportDemoLimit(res))) {
+                      setBuildStatus("error");
+                    }
                     resetCompileState();
-                    setBuildStatus("error");
                   }
                 })
                 .catch(() => {
@@ -564,6 +596,7 @@ export function EditorLayout({
   }, [
     clearAllPolling,
     project.id,
+    reportDemoLimit,
     resetCompileState,
     restoreViewPositionsAfterBuild,
     saveViewPositionsBeforeBuild,
@@ -670,12 +703,15 @@ export function EditorLayout({
           fetch(withShareToken(`/api/projects/${project.id}/compile`), {
             method: "POST",
           })
-            .then((res) => {
+            .then(async (res) => {
               if (res.ok) {
                 startBuildPolling();
               } else {
+                // A demo limit must not chain into another attempt.
+                if (!(await reportDemoLimit(res))) {
+                  setBuildStatus("error");
+                }
                 resetCompileState();
-                setBuildStatus("error");
               }
             })
             .catch(() => {
@@ -905,11 +941,12 @@ export function EditorLayout({
       const willCompile = shouldCompile && !compilingRef.current;
 
       try {
-        await fetch(withShareToken(`/api/projects/${project.id}/files/${activeFileId}`), {
+        const res = await fetch(withShareToken(`/api/projects/${project.id}/files/${activeFileId}`), {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ content, autoCompile: willCompile }),
         });
+        const payload = await res.json().catch(() => null);
 
         savedContentRef.current.set(activeFileId, content);
         setDirtyFileIds((prev) => {
@@ -918,14 +955,20 @@ export function EditorLayout({
           return next;
         });
 
-      if (willCompile) {
-        saveViewPositionsBeforeBuild();
-        compilingRef.current = true;
-        pendingRecompileRef.current = false;
-        setBuildActorName("You");
-        setCompiling(true);
-        setBuildStatus("queued");
-        setPdfLoading(true);
+        // The save succeeded but the demo refused the automatic rebuild.
+        if (payload?.demoLimited) {
+          setDemoNotice(
+            payload.demoLimited.error ?? "Demo compile limit reached."
+          );
+          setBuildStatus("idle");
+        } else if (willCompile) {
+          saveViewPositionsBeforeBuild();
+          compilingRef.current = true;
+          pendingRecompileRef.current = false;
+          setBuildActorName("You");
+          setCompiling(true);
+          setBuildStatus("queued");
+          setPdfLoading(true);
           startBuildPolling();
         } else if (shouldCompile && compilingRef.current) {
           // Wanted to compile but already compiling — recompile after current build
@@ -998,6 +1041,7 @@ export function EditorLayout({
     if (compilingRef.current) return;
 
     setAiFixExplanation(null);
+    setDemoNotice(null);
     saveViewPositionsBeforeBuild();
     compilingRef.current = true;
     pendingRecompileRef.current = false;
@@ -1012,6 +1056,10 @@ export function EditorLayout({
       });
 
       if (!res.ok) {
+        if (await reportDemoLimit(res)) {
+          resetCompileState();
+          return;
+        }
         setBuildStatus("error");
         resetCompileState();
         return;
@@ -1025,6 +1073,7 @@ export function EditorLayout({
   }, [
     canEdit,
     project.id,
+    reportDemoLimit,
     resetCompileState,
     saveViewPositionsBeforeBuild,
     startBuildPolling,
@@ -1544,6 +1593,21 @@ export function EditorLayout({
             />
           </Panel>
         </PanelGroup>
+
+        {/* Demo limit notice */}
+        {demoNotice && (
+          <div className="fixed bottom-4 right-4 z-50 flex max-w-sm items-start gap-3 rounded-lg border border-accent/30 bg-bg-elevated px-4 py-3 text-xs text-text-secondary shadow-lg">
+            <span className="flex-1">{demoNotice}</span>
+            <button
+              type="button"
+              onClick={() => setDemoNotice(null)}
+              aria-label="Dismiss"
+              className="shrink-0 text-text-muted transition-colors hover:text-text-primary"
+            >
+              ×
+            </button>
+          </div>
+        )}
 
         {/* Chat Panel */}
         {isSharedProject && (

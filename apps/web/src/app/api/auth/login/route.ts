@@ -8,9 +8,34 @@ import { loginSchema } from "@/lib/utils/validation";
 import { eq } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import { NextRequest, NextResponse } from "next/server";
+import {
+  consumeRateLimit,
+  demoBlockResponse,
+  demoConfig,
+  getClientIp,
+} from "@/lib/demo";
 
 export async function POST(request: NextRequest) {
   try {
+    // Demo mode: blunt brute-force protection on a shared public host.
+    if (demoConfig.enabled) {
+      const loginLimit = await consumeRateLimit(
+        "login",
+        getClientIp(request),
+        demoConfig.loginsPerIpQuarterHour,
+        900
+      );
+
+      if (!loginLimit.allowed) {
+        return demoBlockResponse({
+          status: 429,
+          code: "demo_login_rate_limited",
+          error: "Too many sign-in attempts. Try again in a few minutes.",
+          retryAfterSeconds: loginLimit.retryAfterSeconds,
+        });
+      }
+    }
+
     const body = await request.json();
 
     const parsed = loginSchema.safeParse(body);

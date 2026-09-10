@@ -2,6 +2,7 @@ import { db } from "@/lib/db";
 import { sessions, users } from "@/lib/db/schema";
 import { shouldUseSecureCookies } from "@/lib/auth/config";
 import { signSessionJwt, verifySessionJwt } from "@/lib/auth/jwt";
+import { demoConfig } from "@/lib/demo/config";
 import { eq, and, gt } from "drizzle-orm";
 import { v4 as uuidv4 } from "uuid";
 import { cookies } from "next/headers";
@@ -11,10 +12,20 @@ const SESSION_EXPIRY_DAYS = parseInt(
   10
 );
 
+/**
+ * Demo accounts are short-lived so their data becomes reapable quickly.
+ */
+function sessionExpiryDays(): number {
+  return demoConfig.enabled
+    ? Math.max(demoConfig.sessionHours, 1) / 24
+    : SESSION_EXPIRY_DAYS;
+}
+
 export async function createSession(userId: string): Promise<string> {
   const sessionId = uuidv4();
-  const expiresAt = new Date();
-  expiresAt.setDate(expiresAt.getDate() + SESSION_EXPIRY_DAYS);
+  const expiresAt = new Date(
+    Date.now() + sessionExpiryDays() * 24 * 60 * 60 * 1000
+  );
 
   await db.insert(sessions).values({
     userId,
@@ -81,7 +92,7 @@ export async function setSessionCookie(token: string) {
     httpOnly: true,
     secure: shouldUseSecureCookies(),
     sameSite: "lax",
-    maxAge: SESSION_EXPIRY_DAYS * 24 * 60 * 60,
+    maxAge: Math.round(sessionExpiryDays() * 24 * 60 * 60),
     path: "/",
   });
 }

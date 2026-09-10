@@ -1,6 +1,8 @@
 import Link from "next/link";
-import { Eye, Infinity, Server, Code2 } from "lucide-react";
+import { Eye, Infinity, Server, Code2, Cpu, Clock } from "lucide-react";
 import { getSessionToken, validateSession } from "@/lib/auth/session";
+import { DemoBanner } from "@/components/DemoBanner";
+import { demoConfig } from "@/lib/demo/config";
 
 const features = [
   {
@@ -29,6 +31,27 @@ const features = [
   },
 ];
 
+/**
+ * The marketing copy above promises "no limits" on your own server, which is
+ * not true of a hosted demo — so the demo instance describes itself honestly.
+ */
+const demoFeatures = [
+  features[0],
+  {
+    icon: Cpu,
+    title: "Real Compiles",
+    description:
+      "Every build runs a real TeX Live container against your project. Nothing about the editor is mocked.",
+  },
+  {
+    icon: Clock,
+    title: "Temporary by Design",
+    description:
+      "This is a shared demo. Accounts and projects are deleted automatically a few hours after you stop using them.",
+  },
+  features[3],
+];
+
 export default async function HomePage() {
   let isLoggedIn = false;
   try {
@@ -40,6 +63,10 @@ export default async function HomePage() {
   } catch {
     // Not logged in
   }
+
+  const isDemo = demoConfig.enabled;
+  const shownFeatures = isDemo ? demoFeatures : features;
+
   return (
     <div className="flex min-h-screen flex-col bg-bg-primary">
       {/* Navigation */}
@@ -78,6 +105,8 @@ export default async function HomePage() {
         </div>
       </nav>
 
+      <DemoBanner />
+
       {/* Hero Section */}
       <section className="mx-auto max-w-6xl px-6 py-24 text-center">
         <h1 className="text-5xl font-bold tracking-tight text-text-primary sm:text-6xl">
@@ -85,21 +114,26 @@ export default async function HomePage() {
           <span className="text-accent">simplified.</span>
         </h1>
         <p className="mx-auto mt-6 max-w-2xl text-lg text-text-secondary">
-          Self-hostable, open-source LaTeX editor with live PDF preview.
-          Write beautiful documents with a modern editing experience.
+          {isDemo
+            ? "A live, fully-working demo of an open-source LaTeX editor with real compiles and instant PDF preview. Try it without installing anything."
+            : "Self-hostable, open-source LaTeX editor with live PDF preview. Write beautiful documents with a modern editing experience."}
         </p>
         <div className="mt-10 flex items-center justify-center gap-4">
           <Link
             href={isLoggedIn ? "/dashboard" : "/register"}
             className="rounded-lg bg-accent px-6 py-3 text-base font-medium text-bg-primary transition-colors hover:bg-accent-hover"
           >
-            {isLoggedIn ? "Open Dashboard" : "Get Started"}
+            {isLoggedIn
+              ? "Open Dashboard"
+              : isDemo
+                ? "Try the demo"
+                : "Get Started"}
           </Link>
           <a
             href="https://github.com/Manan-Santoki/Backslash"
             className="rounded-lg border border-border bg-bg-elevated px-6 py-3 text-base font-medium text-text-primary transition-colors hover:bg-border"
           >
-            View on GitHub
+            {isDemo ? "Self-host it" : "View on GitHub"}
           </a>
         </div>
       </section>
@@ -107,7 +141,7 @@ export default async function HomePage() {
       {/* Feature Grid */}
       <section className="mx-auto max-w-6xl px-6 pb-24">
         <div className="grid gap-6 sm:grid-cols-2">
-          {features.map((feature) => (
+          {shownFeatures.map((feature) => (
             <div
               key={feature.title}
               className="rounded-lg border border-border bg-bg-secondary p-6 transition-colors hover:bg-bg-elevated/50"

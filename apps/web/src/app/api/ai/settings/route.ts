@@ -7,6 +7,7 @@ import {
 import type { AiModelSettings, AiProvider } from "@/lib/ai/types";
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
+import { demoDisabledResponse, isFeatureDisabled } from "@/lib/demo";
 
 const providerSchema = z.enum([
   "openai",
@@ -57,6 +58,10 @@ function normalizeModelConfig(
 }
 
 export async function GET(request: NextRequest) {
+  if (isFeatureDisabled("ai")) {
+    return demoDisabledResponse("ai");
+  }
+
   return withAuth(request, async (_req, user) => {
     const settings = await getUserAiSettings(user.id);
     return NextResponse.json({ settings: toPublicAiSettings(settings) });
@@ -64,6 +69,10 @@ export async function GET(request: NextRequest) {
 }
 
 export async function PUT(request: NextRequest) {
+  if (isFeatureDisabled("ai")) {
+    return demoDisabledResponse("ai");
+  }
+
   return withAuth(request, async (req, user) => {
     let body: unknown = {};
     try {

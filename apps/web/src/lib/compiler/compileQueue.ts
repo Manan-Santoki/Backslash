@@ -71,6 +71,28 @@ export async function enqueueCompileJob(data: CompileJobData): Promise<void> {
   }
 }
 
+/**
+ * Number of builds waiting or currently running. Used by demo mode to shed load
+ * before a visitor is left staring at a stalled build.
+ */
+export async function getCompileQueueDepth(): Promise<number> {
+  const queue = new Queue<CompileJobData>(COMPILE_QUEUE_NAME, {
+    connection: REDIS_CONNECTION,
+  });
+
+  try {
+    const [waiting, active] = await Promise.all([
+      queue.getWaitingCount(),
+      queue.getActiveCount(),
+    ]);
+    return waiting + active;
+  } catch {
+    return 0;
+  } finally {
+    await queue.close().catch(() => {});
+  }
+}
+
 export async function requestCompileCancel(
   buildId: string
 ): Promise<{ wasQueued: boolean; wasRunning: boolean }> {

@@ -12,6 +12,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { PasswordPromptDialog } from "@/components/ui/password-prompt-dialog";
+import { useDemoDisabled } from "@/hooks/useDemo";
 
 type AiProvider = "openai" | "openrouter" | "anthropic" | "custom";
 
@@ -92,6 +93,7 @@ export default function SettingsPage() {
     defaultAiModelState()
   );
   const [aiSaving, setAiSaving] = useState(false);
+  const aiDisabled = useDemoDisabled("ai");
   const [aiSuccess, setAiSuccess] = useState("");
   const [aiError, setAiError] = useState("");
 
@@ -389,6 +391,7 @@ export default function SettingsPage() {
         </form>
       </section>
 
+      {!aiDisabled && (
       <section className="max-w-4xl space-y-5">
         <div className="border-b border-border pb-2">
           <h2 className="flex items-center gap-2 text-lg font-semibold text-text-primary">
@@ -680,6 +683,7 @@ export default function SettingsPage() {
           </button>
         </form>
       </section>
+      )}
     </div>
   );
 }
