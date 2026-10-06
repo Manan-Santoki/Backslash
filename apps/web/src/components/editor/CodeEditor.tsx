@@ -324,6 +324,9 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
 
       let view: import("@codemirror/view").EditorView | null = null;
       let detachPointerDown: (() => void) | null = null;
+      // Set on cleanup so an init that is still awaiting imports (e.g. after a
+      // StrictMode remount) doesn't create a second, orphaned editor view.
+      let disposed = false;
 
       async function initEditor() {
         const { EditorState, StateEffect, StateField, Transaction } = await import("@codemirror/state");
@@ -355,7 +358,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
         const { stex } = await import("@codemirror/legacy-modes/mode/stex");
         const { RangeSetBuilder } = await import("@codemirror/state");
 
-        if (!containerRef.current) return;
+        if (disposed || !containerRef.current) return;
 
         editorViewClassRef.current = EditorView;
 
@@ -751,6 +754,7 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(
       initEditor();
 
       return () => {
+        disposed = true;
         if (detachPointerDown) {
           detachPointerDown();
           detachPointerDown = null;
