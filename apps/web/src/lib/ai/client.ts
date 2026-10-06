@@ -35,6 +35,35 @@ function extractJsonPayload(rawText: string): unknown {
   return JSON.parse(sliced);
 }
 
+type OpenAiCompletionPayload = {
+  choices?: Array<{
+    message?: { content?: string | null };
+    delta?: { content?: string | null };
+  }>;
+};
+
+// Some OpenAI-compatible proxies stream SSE chunks even when stream=false,
+// so accept either a plain completion body or "data: {...}" chunk lines.
+function parseOpenAiCompletionContent(body: string): string | null {
+  const trimmed = body.trim();
+  if (!trimmed.startsWith("data:")) {
+    const json = JSON.parse(trimmed) as OpenAiCompletionPayload;
+    return json.choices?.[0]?.message?.content ?? null;
+  }
+
+  let content = "";
+  for (const line of trimmed.split("\n")) {
+    const data = line.trim();
+    if (!data.startsWith("data:")) continue;
+    const chunk = data.slice(5).trim();
+    if (!chunk || chunk === "[DONE]") continue;
+    const json = JSON.parse(chunk) as OpenAiCompletionPayload;
+    const choice = json.choices?.[0];
+    content += choice?.delta?.content ?? choice?.message?.content ?? "";
+  }
+  return content || null;
+}
+
 async function callOpenAiCompatible(
   params: StrictJsonCompletionParams,
   apiKey: string,
@@ -60,6 +89,7 @@ async function callOpenAiCompatible(
       body: JSON.stringify({
         model: params.modelSettings.model,
         temperature: params.temperature ?? 0.1,
+        stream: false,
         response_format: { type: "json_object" },
         messages: [
           {
@@ -82,10 +112,7 @@ async function callOpenAiCompatible(
       );
     }
 
-    const json = (await res.json()) as {
-      choices?: Array<{ message?: { content?: string | null } }>;
-    };
-    const content = json.choices?.[0]?.message?.content;
+    const content = parseOpenAiCompletionContent(await res.text());
     if (!content || typeof content !== "string") {
       throw new Error("AI provider returned no completion content");
     }

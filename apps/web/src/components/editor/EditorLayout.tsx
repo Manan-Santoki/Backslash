@@ -1122,7 +1122,7 @@ export function EditorLayout({
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         setBuildStatus("error");
-        setBuildLogs(data.error || "AI fix failed");
+        setBuildLogs(data.error || `AI fix failed (HTTP ${res.status})`);
         resetCompileState();
         return;
       }
