@@ -14,6 +14,7 @@ import {
   ChevronDown,
   Check,
   Ban,
+  Sparkles,
 } from "lucide-react";
 import { useDemoDisabled } from "@/hooks/useDemo";
 import {
@@ -62,6 +63,9 @@ interface EditorHeaderProps {
   shareToken?: string | null;
   canManageShare?: boolean;
   canEdit?: boolean;
+  aiAssistantAvailable?: boolean;
+  aiAssistantOpen?: boolean;
+  onAiAssistantToggle?: () => void;
 }
 
 // ─── Build Status Badge ────────────────────────────
@@ -139,6 +143,9 @@ export function EditorHeader({
   shareToken = null,
   canManageShare = role === "owner",
   canEdit = true,
+  aiAssistantAvailable = false,
+  aiAssistantOpen = false,
+  onAiAssistantToggle,
 }: EditorHeaderProps) {
   const [shareOpen, setShareOpen] = useState(false);
   const sharingDisabled = useDemoDisabled("sharing");
@@ -355,6 +362,24 @@ export function EditorHeader({
 
       {/* Spacer */}
       <div className="flex-1" />
+
+      {aiAssistantAvailable && onAiAssistantToggle && (
+        <button
+          type="button"
+          onClick={onAiAssistantToggle}
+          aria-pressed={aiAssistantOpen}
+          title="AI assistant"
+          className={cn(
+            "flex items-center gap-1.5 rounded-lg border px-3 py-1 text-sm font-medium transition-colors",
+            aiAssistantOpen
+              ? "border-accent/60 bg-accent/15 text-text-primary"
+              : "border-border text-text-secondary hover:bg-bg-elevated hover:text-text-primary"
+          )}
+        >
+          <Sparkles className="h-3.5 w-3.5 text-accent" />
+          <span className="hidden sm:inline">AI</span>
+        </button>
+      )}
 
       {/* Role badge (for shared users) */}
       {role !== "owner" && (

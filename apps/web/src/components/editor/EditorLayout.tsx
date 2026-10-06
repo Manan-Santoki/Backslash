@@ -14,6 +14,7 @@ import { EditorTabs } from "@/components/editor/EditorTabs";
 import { PdfViewer, PdfViewerHandle } from "@/components/editor/PdfViewer";
 import { BuildLogs } from "@/components/editor/BuildLogs";
 import { ChatPanel } from "@/components/editor/ChatPanel";
+import { AiAssistantPanel } from "@/components/editor/AiAssistantPanel";
 import { useWebSocket } from "@/hooks/useWebSocket";
 import { FileText } from "lucide-react";
 import type { PresenceUser, ChatMessage, CursorSelection, DocChange } from "@backslash/shared";
@@ -169,6 +170,14 @@ export function EditorLayout({
   const [buildErrors, setBuildErrors] = useState<LogError[]>([]);
   const [aiFixExplanation, setAiFixExplanation] = useState<string | null>(null);
   const [fixingWithAi, setFixingWithAi] = useState(false);
+  const [aiPanelOpen, setAiPanelOpen] = useState(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.localStorage.getItem("ai-assistant-open") === "true";
+    } catch {
+      return false;
+    }
+  });
   const [aiFixEnabled, setAiFixEnabled] = useState(false);
   const [buildLogsExpanded, setBuildLogsExpanded] = useState(true);
   const [demoNotice, setDemoNotice] = useState<string | null>(null);
@@ -1279,6 +1288,88 @@ export function EditorLayout({
     }
   }, [mainFilePath, project.id, withShareToken]);
 
+  // ─── AI assistant ─────────────────────────────────
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem("ai-assistant-open", aiPanelOpen ? "true" : "false");
+    } catch {
+      // Ignore localStorage errors
+    }
+  }, [aiPanelOpen]);
+
+  const handleAiBeforeSend = useCallback(async () => {
+    if (activeFileId) {
+      await handleSave(activeFileContent, false);
+    }
+    const range = codeEditorRef.current?.getSelection();
+    const selection =
+      range && range.anchor !== range.head
+        ? activeFileContent.slice(
+            Math.min(range.anchor, range.head),
+            Math.max(range.anchor, range.head)
+          )
+        : null;
+    return { selection };
+  }, [activeFileContent, activeFileId, handleSave]);
+
+  const handleAiFilesChanged = useCallback(
+    (changedPaths: string[], treeChanged: boolean) => {
+      if (treeChanged) refreshFiles();
+      for (const changedPath of changedPaths) {
+        const file = files.find((f) => f.path === changedPath);
+        if (!file) continue;
+        if (file.id === activeFileIdRef.current) {
+          fetchFileContent(file.id);
+        } else {
+          fileContentsRef.current.delete(file.id);
+          savedContentRef.current.delete(file.id);
+        }
+      }
+    },
+    [fetchFileContent, files, refreshFiles]
+  );
+
+  const handleAiBuildQueued = useCallback(() => {
+    saveViewPositionsBeforeBuild();
+    compilingRef.current = true;
+    pendingRecompileRef.current = false;
+    setBuildActorName("AI assistant");
+    setCompiling(true);
+    setBuildStatus("queued");
+    setBuildErrors([]);
+    setPdfLoading(true);
+    startBuildPolling();
+  }, [saveViewPositionsBeforeBuild, startBuildPolling]);
+
+  // Moves and deletes change paths of open tabs; reconcile once the run ends.
+  const handleAiRunFinished = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/projects/${project.id}/files`, { cache: "no-store" });
+      if (!res.ok) return;
+      const data = (await res.json()) as { files: ProjectFile[]; mainFile?: string };
+      setFiles(data.files);
+      if (typeof data.mainFile === "string" && data.mainFile !== mainFilePath) {
+        setMainFilePath(data.mainFile);
+      }
+      const byId = new Map(data.files.map((file) => [file.id, file]));
+      const activeId = activeFileIdRef.current;
+      setOpenFiles((prev) => {
+        const next = prev
+          .filter((file) => byId.has(file.id))
+          .map((file) => ({ id: file.id, path: byId.get(file.id)?.path ?? file.path }));
+        if (activeId && !byId.has(activeId)) {
+          const fallback = next[next.length - 1] ?? null;
+          setActiveFileId(fallback?.id ?? null);
+          if (!fallback) setActiveFileContent("");
+        }
+        return next;
+      });
+    } catch {
+      // Silently fail
+    }
+  }, [mainFilePath, project.id]);
+
   const isImageFile = useCallback(
     (fileId: string | null): boolean => {
       if (!fileId) return false;
@@ -1449,6 +1540,9 @@ export function EditorLayout({
         shareToken={shareToken}
         canManageShare={!isPublicShare && role === "owner"}
         canEdit={canEdit}
+        aiAssistantAvailable={aiFixEnabled}
+        aiAssistantOpen={aiPanelOpen}
+        onAiAssistantToggle={() => setAiPanelOpen((open) => !open)}
       />
 
       {/* Main content area */}
@@ -1466,7 +1560,7 @@ export function EditorLayout({
               autoSaveId={`editor-layout-${project.id}-horizontal`}
             >
               {/* File tree */}
-              <Panel defaultSize={15} minSize={10} collapsible>
+              <Panel id="file-tree" order={1} defaultSize={15} minSize={10} collapsible>
                 <FileTree
                   projectId={project.id}
                   files={files}
@@ -1487,7 +1581,7 @@ export function EditorLayout({
               <PanelResizeHandle className="w-2 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:bg-border" />
 
               {/* Code editor */}
-              <Panel defaultSize={45} minSize={20}>
+              <Panel id="code-editor" order={2} defaultSize={45} minSize={20}>
                 <div className="flex h-full flex-col bg-bg-primary">
                   <EditorTabs
                     openFiles={openFiles}
@@ -1559,9 +1653,28 @@ export function EditorLayout({
               <PanelResizeHandle className="w-2 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:bg-border" />
 
               {/* PDF viewer */}
-              <Panel defaultSize={40} minSize={15}>
+              <Panel id="pdf-viewer" order={3} defaultSize={40} minSize={15}>
                 <PdfViewer ref={pdfViewerRef} pdfUrl={pdfUrl} loading={pdfLoading} onTextSelect={handlePdfTextSelect} />
               </Panel>
+
+              {aiFixEnabled && aiPanelOpen && (
+                <>
+                  <PanelResizeHandle className="w-2 cursor-col-resize touch-none bg-transparent transition-colors hover:bg-accent/30 data-[resize-handle-active]:bg-accent/30 relative after:absolute after:inset-y-0 after:left-1/2 after:-translate-x-1/2 after:w-px after:bg-border" />
+                  <Panel id="ai-assistant" order={4} defaultSize={25} minSize={18}>
+                    <AiAssistantPanel
+                      projectId={project.id}
+                      activeFilePath={
+                        openFiles.find((f) => f.id === activeFileId)?.path ?? null
+                      }
+                      onBeforeSend={handleAiBeforeSend}
+                      onFilesChanged={handleAiFilesChanged}
+                      onBuildQueued={handleAiBuildQueued}
+                      onRunFinished={handleAiRunFinished}
+                      onClose={() => setAiPanelOpen(false)}
+                    />
+                  </Panel>
+                </>
+              )}
             </PanelGroup>
           </Panel>
 

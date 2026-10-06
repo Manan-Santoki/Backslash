@@ -565,10 +565,10 @@ export default function SettingsPage() {
             <div className="rounded-lg border border-border bg-bg-secondary p-4 space-y-4">
               <div>
                 <h3 className="text-sm font-semibold text-text-primary">
-                  LaTeX Writer AI
+                  AI Assistant &amp; Writer
                 </h3>
                 <p className="text-xs text-text-muted">
-                  Reserved for AI writing/generation actions
+                  Powers the AI assistant chat in the editor (editing, organizing files, compiling)
                 </p>
               </div>
 
