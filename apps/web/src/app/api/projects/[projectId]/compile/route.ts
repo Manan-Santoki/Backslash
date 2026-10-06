@@ -1,16 +1,6 @@
-import { db } from "@/lib/db";
-import { projects, builds } from "@/lib/db/schema";
 import { resolveProjectAccess } from "@/lib/auth/project-access";
-import { enqueueCompileJob } from "@/lib/compiler/compileQueue";
-import { broadcastBuildUpdate } from "@/lib/websocket/server";
-import { healthCheck as dockerHealthCheck, getDockerClient } from "@/lib/compiler/docker";
-import {
-  isDedicatedWorkerHealthy,
-  isWorkerExpectedInWeb,
-} from "@/lib/compiler/workerHealth";
-import { eq } from "drizzle-orm";
+import { triggerCompile } from "@/lib/compiler/triggerCompile";
 import { NextRequest, NextResponse } from "next/server";
-import { v4 as uuidv4 } from "uuid";
 import type { Engine } from "@backslash/shared";
 import { checkDemoCompileAllowance, demoBlockResponse } from "@/lib/demo";
 
@@ -56,10 +46,6 @@ export async function POST(
     }
 
     const project = access.project;
-    const storageUserId = project.userId;
-    const actorUserId = access.user?.id ?? null;
-    const buildUserId = access.user?.id ?? storageUserId;
-    const runnerExpectedInWeb = isWorkerExpectedInWeb();
     let compileEngine: Engine = project.engine;
 
     const contentType = request.headers.get("content-type") || "";
@@ -86,81 +72,19 @@ export async function POST(
       }
     }
 
-    if (runnerExpectedInWeb) {
-      // ── Pre-flight: verify Docker is reachable ───────
-      const dockerOk = await dockerHealthCheck();
-      if (!dockerOk) {
-        console.error("[Compile] Docker daemon is not reachable");
-        return NextResponse.json(
-          { error: "Compilation service unavailable — Docker daemon not reachable" },
-          { status: 503 }
-        );
-      }
-
-      // ── Pre-flight: verify compiler image exists ─────
-      try {
-        const docker = getDockerClient();
-        const compilerImage = process.env.COMPILER_IMAGE || "backslash-compiler";
-        const images = await docker.listImages({
-          filters: { reference: [compilerImage] },
-        });
-        if (images.length === 0) {
-          console.error(`[Compile] Compiler image "${compilerImage}" not found`);
-          return NextResponse.json(
-            { error: `Compiler image "${compilerImage}" not found on Docker host` },
-            { status: 503 }
-          );
-        }
-      } catch (imgErr) {
-        console.error("[Compile] Failed to check compiler image:", imgErr);
-        return NextResponse.json(
-          { error: "Compilation service unavailable — unable to verify compiler image" },
-          { status: 503 }
-        );
-      }
-    } else {
-      const workerHealthy = await isDedicatedWorkerHealthy();
-      if (!workerHealthy) {
-        return NextResponse.json(
-          { error: "Compilation worker unavailable — try again shortly" },
-          { status: 503 }
-        );
-      }
-    }
-
-    const buildId = uuidv4();
-
-    // Create a build record with status "queued"
-    await db.insert(builds).values({
-      id: buildId,
+    const result = await triggerCompile({
       projectId,
-      userId: buildUserId,
-      status: "queued",
-      engine: compileEngine,
-    });
-
-    await db
-      .update(projects)
-      .set({ updatedAt: new Date() })
-      .where(eq(projects.id, projectId));
-
-    // Enqueue compile job
-    await enqueueCompileJob({
-      buildId,
-      projectId,
-      userId: buildUserId,
-      storageUserId,
-      triggeredByUserId: actorUserId,
+      storageUserId: project.userId,
+      actorUserId: access.user?.id ?? null,
       engine: compileEngine,
       mainFile: project.mainFile,
     });
 
-    broadcastBuildUpdate(buildUserId, {
-      projectId,
-      buildId,
-      status: "queued",
-      triggeredByUserId: actorUserId,
-    });
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: result.status });
+    }
+
+    const { buildId } = result;
 
     return NextResponse.json(
       {
