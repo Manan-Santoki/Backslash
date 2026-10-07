@@ -193,6 +193,12 @@ async function checkProjectAccess(
   shareToken?: string | null
 ): Promise<{ access: boolean; role: "owner" | "viewer" | "editor" }> {
   try {
+    // Anonymous ids aren't UUIDs; querying uuid columns with them throws, so
+    // only the public-share check applies to them.
+    if (userId.startsWith("anon_")) {
+      return checkPublicShareAccess(projectId, shareToken);
+    }
+
     // Check if owner
     const ownerResult = await sql`
       SELECT id FROM projects
@@ -215,28 +221,35 @@ async function checkProjectAccess(
       return { access: true, role: shareResult[0].role as "viewer" | "editor" };
     }
 
-    // Public-share access requires a matching token.
-    if (shareToken) {
-      const tokenShareResult = await sql`
-        SELECT role FROM project_public_shares
-        WHERE project_id = ${projectId}
-          AND token = ${shareToken}
-          AND (expires_at IS NULL OR expires_at > NOW())
-        LIMIT 1
-      `;
-      if (tokenShareResult.length > 0) {
-        return {
-          access: true,
-          role: tokenShareResult[0].role as "viewer" | "editor",
-        };
-      }
-    }
-
-    return { access: false, role: "viewer" };
+    return checkPublicShareAccess(projectId, shareToken);
   } catch (err) {
     console.error("[WS] Project access check error:", err);
     return { access: false, role: "viewer" };
   }
+}
+
+/** Public-share access requires a matching, unexpired token. */
+async function checkPublicShareAccess(
+  projectId: string,
+  shareToken?: string | null
+): Promise<{ access: boolean; role: "owner" | "viewer" | "editor" }> {
+  if (!shareToken) return { access: false, role: "viewer" };
+
+  const tokenShareResult = await sql`
+    SELECT role FROM project_public_shares
+    WHERE project_id = ${projectId}
+      AND token = ${shareToken}
+      AND (expires_at IS NULL OR expires_at > NOW())
+    LIMIT 1
+  `;
+  if (tokenShareResult.length > 0) {
+    return {
+      access: true,
+      role: tokenShareResult[0].role as "viewer" | "editor",
+    };
+  }
+
+  return { access: false, role: "viewer" };
 }
 
 // ─── Redis Pub/Sub ─────────────────────────────────
