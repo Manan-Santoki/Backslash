@@ -1,7 +1,6 @@
-import { withAuth } from "@/lib/auth/middleware";
+import { getShareToken, resolveProjectAccess } from "@/lib/auth/project-access";
 import { db } from "@/lib/db";
 import { builds, projectFiles } from "@/lib/db/schema";
-import { checkProjectAccess } from "@/lib/db/queries/projects";
 import { parseLatexLog } from "@/lib/compiler/logParser";
 import { completeStrictJson } from "@/lib/ai/client";
 import { resolveProjectAiModel } from "@/lib/ai/settings";
@@ -91,6 +90,11 @@ function buildAuthHeaders(request: NextRequest): HeadersInit {
     headers.cookie = cookie;
   }
 
+  const shareToken = getShareToken(request);
+  if (shareToken) {
+    headers["x-share-token"] = shareToken;
+  }
+
   return headers;
 }
 
@@ -142,250 +146,253 @@ export async function POST(request: NextRequest) {
     return demoDisabledResponse("ai");
   }
 
-  return withAuth(request, async (req, user) => {
-    let body: unknown = {};
-    try {
-      body = await req.json();
-    } catch {
-      body = {};
-    }
+  let body: unknown = {};
+  try {
+    body = await request.json();
+  } catch {
+    body = {};
+  }
 
-    const parsed = requestSchema.safeParse(body);
-    if (!parsed.success) {
-      return NextResponse.json(
-        {
-          error: "Validation failed",
-          details: parsed.error.flatten().fieldErrors,
-        },
-        { status: 400 }
-      );
-    }
-
-    const { projectId } = parsed.data;
-    const errorLimit = parsed.data.errorLimit ?? 8;
-    const recentBuildLimit = parsed.data.recentBuildLimit ?? 3;
-
-    const access = await checkProjectAccess(user.id, projectId);
-    if (!access.access) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    }
-
-    if (access.role === "viewer") {
-      return NextResponse.json({ error: "Permission denied" }, { status: 403 });
-    }
-
-    const aiModel = await resolveProjectAiModel(
-      user.id,
-      access.project,
-      access.role,
-      "buildFix"
-    );
-    if (!aiModel.enabled) {
-      return NextResponse.json(
-        { error: "AI features are disabled in your settings" },
-        { status: 403 }
-      );
-    }
-
-    const project = access.project;
-    const projectDir = storage.getProjectDir(project.userId, projectId);
-
-    const files = await db
-      .select({
-        id: projectFiles.id,
-        path: projectFiles.path,
-        isDirectory: projectFiles.isDirectory,
-      })
-      .from(projectFiles)
-      .where(eq(projectFiles.projectId, projectId));
-
-    const editableFiles = files.filter((file) => !file.isDirectory);
-    if (editableFiles.length === 0) {
-      return NextResponse.json(
-        { error: "No editable files found in project" },
-        { status: 404 }
-      );
-    }
-
-    const requestedActivePath = parsed.data.activeFilePath
-      ? normalizeFilePath(parsed.data.activeFilePath)
-      : "";
-
-    const activeFile =
-      editableFiles.find((file) => file.path === requestedActivePath) ??
-      editableFiles.find((file) => file.path === project.mainFile) ??
-      editableFiles.find((file) => file.path.toLowerCase().endsWith(".tex")) ??
-      editableFiles[0];
-
-    const diskActiveContent = await storage
-      .readFile(path.join(projectDir, activeFile.path))
-      .catch(() => "");
-
-    const activeFileContent =
-      typeof parsed.data.activeFileContent === "string"
-        ? parsed.data.activeFileContent
-        : diskActiveContent;
-
-    const recentBuilds = await db
-      .select({
-        id: builds.id,
-        status: builds.status,
-        logs: builds.logs,
-        createdAt: builds.createdAt,
-      })
-      .from(builds)
-      .where(eq(builds.projectId, projectId))
-      .orderBy(desc(builds.createdAt))
-      .limit(recentBuildLimit);
-
-    const latestLogs = recentBuilds[0]?.logs ?? "";
-    const topErrors = parseLatexLog(latestLogs)
-      .filter((entry) => entry.type === "error")
-      .slice(0, errorLimit)
-      .map((entry) => ({
-        type: entry.type,
-        file: entry.file,
-        line: entry.line,
-        message: entry.message,
-      }));
-
-    const systemPrompt = [
-      "You are a senior LaTeX error-fix assistant.",
-      "Return ONLY valid JSON matching this exact schema:",
-      "{ edits: [{ filePath: string, replaceFrom: number, replaceTo: number, newText: string }], explanation: string }",
-      "Rules:",
-      "1) filePath must match one of the provided project files.",
-      "2) replaceFrom/replaceTo are 1-based inclusive line numbers in filePath.",
-      "3) Keep edits minimal and focused on fixing compile errors.",
-      "4) Do not include markdown or extra keys.",
-    ].join("\n");
-
-    const userPrompt = JSON.stringify(
+  const parsed = requestSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
       {
-        objective: "Fix current LaTeX build failures with minimal safe edits.",
-        project: {
-          id: project.id,
-          name: project.name,
-          engine: project.engine,
-          mainFile: project.mainFile,
-        },
-        activeFile: {
-          path: activeFile.path,
-          content: activeFileContent.slice(0, 32_000),
-        },
-        topCompileErrors: topErrors,
-        recentBuildLogs: recentBuilds.map((build) => ({
-          buildId: build.id,
-          status: build.status,
-          createdAt: build.createdAt,
-          logsTail: tailLines(build.logs ?? "", 80).slice(0, 10_000),
-        })),
-        availableFiles: editableFiles.map((file) => file.path),
+        error: "Validation failed",
+        details: parsed.error.flatten().fieldErrors,
       },
-      null,
-      2
+      { status: 400 }
     );
+  }
 
-    let aiPayload: unknown;
+  const { projectId } = parsed.data;
+  const errorLimit = parsed.data.errorLimit ?? 8;
+  const recentBuildLimit = parsed.data.recentBuildLimit ?? 3;
+
+  const access = await resolveProjectAccess(request, projectId);
+  if (!access.access) {
+    return NextResponse.json({ error: access.error }, { status: access.status });
+  }
+  const userId = access.user?.id ?? null;
+
+  if (access.role === "viewer") {
+    return NextResponse.json({ error: "Permission denied" }, { status: 403 });
+  }
+
+  const aiModel = await resolveProjectAiModel(
+    userId,
+    access.project,
+    access.role,
+    "buildFix"
+  );
+  if (!aiModel.enabled) {
+    return NextResponse.json(
+      {
+        error: userId
+          ? "AI features are disabled in your settings"
+          : "The project owner hasn't shared their AI on this project",
+      },
+      { status: 403 }
+    );
+  }
+
+  const project = access.project;
+  const projectDir = storage.getProjectDir(project.userId, projectId);
+
+  const files = await db
+    .select({
+      id: projectFiles.id,
+      path: projectFiles.path,
+      isDirectory: projectFiles.isDirectory,
+    })
+    .from(projectFiles)
+    .where(eq(projectFiles.projectId, projectId));
+
+  const editableFiles = files.filter((file) => !file.isDirectory);
+  if (editableFiles.length === 0) {
+    return NextResponse.json(
+      { error: "No editable files found in project" },
+      { status: 404 }
+    );
+  }
+
+  const requestedActivePath = parsed.data.activeFilePath
+    ? normalizeFilePath(parsed.data.activeFilePath)
+    : "";
+
+  const activeFile =
+    editableFiles.find((file) => file.path === requestedActivePath) ??
+    editableFiles.find((file) => file.path === project.mainFile) ??
+    editableFiles.find((file) => file.path.toLowerCase().endsWith(".tex")) ??
+    editableFiles[0];
+
+  const diskActiveContent = await storage
+    .readFile(path.join(projectDir, activeFile.path))
+    .catch(() => "");
+
+  const activeFileContent =
+    typeof parsed.data.activeFileContent === "string"
+      ? parsed.data.activeFileContent
+      : diskActiveContent;
+
+  const recentBuilds = await db
+    .select({
+      id: builds.id,
+      status: builds.status,
+      logs: builds.logs,
+      createdAt: builds.createdAt,
+    })
+    .from(builds)
+    .where(eq(builds.projectId, projectId))
+    .orderBy(desc(builds.createdAt))
+    .limit(recentBuildLimit);
+
+  const latestLogs = recentBuilds[0]?.logs ?? "";
+  const topErrors = parseLatexLog(latestLogs)
+    .filter((entry) => entry.type === "error")
+    .slice(0, errorLimit)
+    .map((entry) => ({
+      type: entry.type,
+      file: entry.file,
+      line: entry.line,
+      message: entry.message,
+    }));
+
+  const systemPrompt = [
+    "You are a senior LaTeX error-fix assistant.",
+    "Return ONLY valid JSON matching this exact schema:",
+    "{ edits: [{ filePath: string, replaceFrom: number, replaceTo: number, newText: string }], explanation: string }",
+    "Rules:",
+    "1) filePath must match one of the provided project files.",
+    "2) replaceFrom/replaceTo are 1-based inclusive line numbers in filePath.",
+    "3) Keep edits minimal and focused on fixing compile errors.",
+    "4) Do not include markdown or extra keys.",
+  ].join("\n");
+
+  const userPrompt = JSON.stringify(
+    {
+      objective: "Fix current LaTeX build failures with minimal safe edits.",
+      project: {
+        id: project.id,
+        name: project.name,
+        engine: project.engine,
+        mainFile: project.mainFile,
+      },
+      activeFile: {
+        path: activeFile.path,
+        content: activeFileContent.slice(0, 32_000),
+      },
+      topCompileErrors: topErrors,
+      recentBuildLogs: recentBuilds.map((build) => ({
+        buildId: build.id,
+        status: build.status,
+        createdAt: build.createdAt,
+        logsTail: tailLines(build.logs ?? "", 80).slice(0, 10_000),
+      })),
+      availableFiles: editableFiles.map((file) => file.path),
+    },
+    null,
+    2
+  );
+
+  let aiPayload: unknown;
+  try {
+    aiPayload = await completeStrictJson({
+      modelSettings: aiModel.modelSettings,
+      systemPrompt,
+      userPrompt,
+      temperature: 0.1,
+    });
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "AI provider request failed",
+      },
+      { status: 502 }
+    );
+  }
+
+  const aiResult = aiResponseSchema.safeParse(aiPayload);
+  if (!aiResult.success) {
+    return NextResponse.json(
+      {
+        error: "AI response schema validation failed",
+        details: aiResult.error.flatten().fieldErrors,
+      },
+      { status: 502 }
+    );
+  }
+
+  const normalizedEdits = aiResult.data.edits
+    .map((edit) => ({
+      filePath: normalizeFilePath(edit.filePath),
+      replaceFrom: edit.replaceFrom,
+      replaceTo: edit.replaceTo,
+      newText: edit.newText,
+    }))
+    .filter((edit) => {
+      const validPath = validateFilePath(edit.filePath);
+      return validPath.valid && edit.replaceTo >= edit.replaceFrom;
+    });
+
+  const editsByFile = new Map<string, AiEdit[]>();
+  for (const edit of normalizedEdits) {
+    const next = editsByFile.get(edit.filePath) ?? [];
+    next.push(edit);
+    editsByFile.set(edit.filePath, next);
+  }
+
+  const applied: Array<{
+    filePath: string;
+    replaceFrom: number;
+    replaceTo: number;
+  }> = [];
+  const skipped: Array<{ filePath: string; reason: string }> = [];
+
+  for (const [filePath, edits] of editsByFile.entries()) {
+    const file = editableFiles.find((entry) => entry.path === filePath);
+    if (!file) {
+      skipped.push({ filePath, reason: "File not found in project" });
+      continue;
+    }
+
     try {
-      aiPayload = await completeStrictJson({
-        modelSettings: aiModel.modelSettings,
-        systemPrompt,
-        userPrompt,
-        temperature: 0.1,
-      });
-    } catch (error) {
-      return NextResponse.json(
-        {
-          error:
-            error instanceof Error
-              ? error.message
-              : "AI provider request failed",
-        },
-        { status: 502 }
-      );
-    }
-
-    const aiResult = aiResponseSchema.safeParse(aiPayload);
-    if (!aiResult.success) {
-      return NextResponse.json(
-        {
-          error: "AI response schema validation failed",
-          details: aiResult.error.flatten().fieldErrors,
-        },
-        { status: 502 }
-      );
-    }
-
-    const normalizedEdits = aiResult.data.edits
-      .map((edit) => ({
-        filePath: normalizeFilePath(edit.filePath),
-        replaceFrom: edit.replaceFrom,
-        replaceTo: edit.replaceTo,
-        newText: edit.newText,
-      }))
-      .filter((edit) => {
-        const validPath = validateFilePath(edit.filePath);
-        return validPath.valid && edit.replaceTo >= edit.replaceFrom;
-      });
-
-    const editsByFile = new Map<string, AiEdit[]>();
-    for (const edit of normalizedEdits) {
-      const next = editsByFile.get(edit.filePath) ?? [];
-      next.push(edit);
-      editsByFile.set(edit.filePath, next);
-    }
-
-    const applied: Array<{
-      filePath: string;
-      replaceFrom: number;
-      replaceTo: number;
-    }> = [];
-    const skipped: Array<{ filePath: string; reason: string }> = [];
-
-    for (const [filePath, edits] of editsByFile.entries()) {
-      const file = editableFiles.find((entry) => entry.path === filePath);
-      if (!file) {
-        skipped.push({ filePath, reason: "File not found in project" });
+      const current = await storage.readFile(path.join(projectDir, file.path));
+      const nextContent = applyLineEdits(current, edits);
+      if (nextContent === current) {
         continue;
       }
 
-      try {
-        const current = await storage.readFile(path.join(projectDir, file.path));
-        const nextContent = applyLineEdits(current, edits);
-        if (nextContent === current) {
-          continue;
-        }
-
-        await updateFileViaExistingApi(request, projectId, file.id, nextContent);
-        for (const edit of edits) {
-          applied.push({
-            filePath,
-            replaceFrom: edit.replaceFrom,
-            replaceTo: edit.replaceTo,
-          });
-        }
-      } catch (error) {
-        skipped.push({
+      await updateFileViaExistingApi(request, projectId, file.id, nextContent);
+      for (const edit of edits) {
+        applied.push({
           filePath,
-          reason:
-            error instanceof Error ? error.message : "Failed to apply edit",
+          replaceFrom: edit.replaceFrom,
+          replaceTo: edit.replaceTo,
         });
       }
+    } catch (error) {
+      skipped.push({
+        filePath,
+        reason:
+          error instanceof Error ? error.message : "Failed to apply edit",
+      });
     }
+  }
 
-    const compile = await triggerCompileViaExistingApi(request, projectId);
+  const compile = await triggerCompileViaExistingApi(request, projectId);
 
-    return NextResponse.json(
-      {
-        explanation: aiResult.data.explanation,
-        appliedEdits: applied,
-        skippedEdits: skipped,
-        compile: {
-          statusCode: compile.statusCode,
-          result: compile.payload,
-        },
-      }
-    );
-  });
+  return NextResponse.json(
+    {
+      explanation: aiResult.data.explanation,
+      appliedEdits: applied,
+      skippedEdits: skipped,
+      compile: {
+        statusCode: compile.statusCode,
+        result: compile.payload,
+      },
+    }
+  );
 }

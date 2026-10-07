@@ -536,7 +536,8 @@ export function ShareDialog({
                     )}
                   </div>
                   <p className="mt-1 text-xs text-text-muted">
-                    Editors without their own AI key use your AI settings on this
+                    Editors without their own AI key, including anyone editing
+                    through the public link, use your AI settings on this
                     project. Their usage is billed to your key.
                   </p>
                 </div>

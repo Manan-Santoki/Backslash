@@ -20,7 +20,8 @@ type ProjectFileRow = typeof projectFiles.$inferSelect;
 export interface AgentToolContext {
   project: ProjectRow;
   role: "owner" | "editor" | "viewer";
-  userId: string;
+  /** Null for anonymous public-link editors. */
+  userId: string | null;
   signal?: AbortSignal;
   /** Called when a compile is queued so the client can follow the build. */
   onBuildQueued?: (buildId: string) => void;
@@ -307,7 +308,7 @@ async function ensureParentFolders(ctx: AgentToolContext, filePath: string): Pro
     broadcastFileEvent({
       type: "file:created",
       projectId: ctx.project.id,
-      userId: ctx.userId,
+      userId: ctx.userId ?? "anonymous",
       fileId,
       path: dirPath,
       isDirectory: true,
@@ -336,7 +337,7 @@ async function writeText(
     broadcastFileEvent({
       type: "file:saved",
       projectId: ctx.project.id,
-      userId: ctx.userId,
+      userId: ctx.userId ?? "anonymous",
       fileId: existing.id,
       path: filePath,
     });
@@ -359,7 +360,7 @@ async function writeText(
   broadcastFileEvent({
     type: "file:created",
     projectId: ctx.project.id,
-    userId: ctx.userId,
+    userId: ctx.userId ?? "anonymous",
     fileId,
     path: filePath,
     isDirectory: false,
@@ -594,7 +595,7 @@ const handlers: Record<string, ToolHandler> = {
     broadcastFileEvent({
       type: "file:created",
       projectId: ctx.project.id,
-      userId: ctx.userId,
+      userId: ctx.userId ?? "anonymous",
       fileId: file.id,
       path: to,
       isDirectory: file.isDirectory ?? false,
@@ -649,7 +650,7 @@ const handlers: Record<string, ToolHandler> = {
     broadcastFileEvent({
       type: "file:deleted",
       projectId: ctx.project.id,
-      userId: ctx.userId,
+      userId: ctx.userId ?? "anonymous",
       fileId: file.id,
       path: target,
     });
@@ -664,8 +665,10 @@ const handlers: Record<string, ToolHandler> = {
 
   async compile(ctx) {
     requireEditor(ctx);
-    const demoBlock = await checkDemoCompileAllowance(ctx.userId);
-    if (demoBlock) throw new ToolError(demoBlock.error);
+    if (ctx.userId) {
+      const demoBlock = await checkDemoCompileAllowance(ctx.userId);
+      if (demoBlock) throw new ToolError(demoBlock.error);
+    }
 
     const result = await triggerCompile({
       projectId: ctx.project.id,

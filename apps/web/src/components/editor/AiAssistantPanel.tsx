@@ -37,6 +37,8 @@ interface UiMessage {
 
 interface AiAssistantPanelProps {
   projectId: string;
+  /** Public share token when the editor was opened through a share link. */
+  shareToken?: string | null;
   activeFilePath: string | null;
   /** Persists unsaved editor changes and returns the current selection, if any. */
   onBeforeSend: () => Promise<{ selection: string | null }>;
@@ -140,6 +142,7 @@ function MessageText({ text }: { text: string }) {
 
 export function AiAssistantPanel({
   projectId,
+  shareToken = null,
   activeFilePath,
   onBeforeSend,
   onFilesChanged,
@@ -249,7 +252,10 @@ export function AiAssistantPanel({
 
         const res = await fetch("/api/ai/chat", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(shareToken ? { "x-share-token": shareToken } : {}),
+          },
           body: JSON.stringify({
             projectId,
             activeFilePath: activeFilePath ?? undefined,
@@ -318,7 +324,7 @@ export function AiAssistantPanel({
         inputRef.current?.focus();
       }
     },
-    [activeFilePath, handleEvent, messages, onBeforeSend, onRunFinished, projectId, running, updateAssistant]
+    [activeFilePath, handleEvent, messages, onBeforeSend, onRunFinished, projectId, running, shareToken, updateAssistant]
   );
 
   const handleSubmit = (event: FormEvent) => {

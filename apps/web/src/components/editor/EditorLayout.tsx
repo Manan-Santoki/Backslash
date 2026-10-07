@@ -355,8 +355,15 @@ export function EditorLayout({
   );
 
   useEffect(() => {
-    if (!canEdit || shareToken) {
+    if (!canEdit) {
       setAiFixEnabled(false);
+      return;
+    }
+
+    // Public-link editors have no settings of their own; the server decides
+    // whether the owner's shared AI is available.
+    if (shareToken) {
+      setAiFixEnabled(true);
       return;
     }
 
@@ -1116,7 +1123,7 @@ export function EditorLayout({
         await handleSave(activeFileContent, false);
       }
 
-      const res = await fetch("/api/ai/fix-build", {
+      const res = await fetch(withShareToken("/api/ai/fix-build"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -1195,6 +1202,7 @@ export function EditorLayout({
     resetCompileState,
     saveViewPositionsBeforeBuild,
     startBuildPolling,
+    withShareToken,
   ]);
 
   const handleCancelBuild = useCallback(async () => {
@@ -1345,7 +1353,9 @@ export function EditorLayout({
   // Moves and deletes change paths of open tabs; reconcile once the run ends.
   const handleAiRunFinished = useCallback(async () => {
     try {
-      const res = await fetch(`/api/projects/${project.id}/files`, { cache: "no-store" });
+      const res = await fetch(withShareToken(`/api/projects/${project.id}/files`), {
+        cache: "no-store",
+      });
       if (!res.ok) return;
       const data = (await res.json()) as { files: ProjectFile[]; mainFile?: string };
       setFiles(data.files);
@@ -1368,7 +1378,7 @@ export function EditorLayout({
     } catch {
       // Silently fail
     }
-  }, [mainFilePath, project.id]);
+  }, [mainFilePath, project.id, withShareToken]);
 
   const isImageFile = useCallback(
     (fileId: string | null): boolean => {
@@ -1663,6 +1673,7 @@ export function EditorLayout({
                   <Panel id="ai-assistant" order={4} defaultSize={25} minSize={18}>
                     <AiAssistantPanel
                       projectId={project.id}
+                      shareToken={shareToken}
                       activeFilePath={
                         openFiles.find((f) => f.id === activeFileId)?.path ?? null
                       }
@@ -1697,7 +1708,7 @@ export function EditorLayout({
               errors={buildErrors}
               actorName={buildActorName}
               onErrorClick={handleErrorClick}
-              canFixWithAi={canEdit && !shareToken && aiFixEnabled}
+              canFixWithAi={canEdit && aiFixEnabled}
               fixingWithAi={fixingWithAi}
               onFixWithAi={handleFixWithAi}
               aiExplanation={aiFixExplanation}
