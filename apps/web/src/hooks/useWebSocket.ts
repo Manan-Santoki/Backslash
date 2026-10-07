@@ -129,6 +129,41 @@ function getWsConfig(): { url: string; path: string } {
   return { url: "http://localhost:3001", path: "/socket.io" };
 }
 
+// Anonymous (public link) identity, kept per browser so reloads and
+// reconnects keep the same name.
+const ANON_IDENTITY_KEY = "backslash-anon-identity";
+
+interface AnonIdentity {
+  anonId: string;
+  anonName?: string;
+}
+
+function loadAnonIdentity(): AnonIdentity {
+  try {
+    const stored = JSON.parse(localStorage.getItem(ANON_IDENTITY_KEY) ?? "null");
+    if (stored && typeof stored.anonId === "string") return stored as AnonIdentity;
+  } catch {
+    // Storage unavailable or corrupt; fall through to a fresh id.
+  }
+  const identity: AnonIdentity = { anonId: crypto.randomUUID() };
+  try {
+    localStorage.setItem(ANON_IDENTITY_KEY, JSON.stringify(identity));
+  } catch {
+    // Identity just won't persist across reloads.
+  }
+  return identity;
+}
+
+function saveAnonName(identity: AnonIdentity, name: string): void {
+  if (identity.anonName === name) return;
+  identity.anonName = name;
+  try {
+    localStorage.setItem(ANON_IDENTITY_KEY, JSON.stringify(identity));
+  } catch {
+    // Ignore.
+  }
+}
+
 // ─── Hook ──────────────────────────────────────────
 
 export function useWebSocket(
@@ -188,6 +223,8 @@ export function useWebSocket(
     if (!projectId) return;
 
     const { url: wsUrl, path: wsPath } = getWsConfig();
+    const shareToken = optionsRef.current.shareToken;
+    const anonIdentity = shareToken ? loadAnonIdentity() : null;
 
     const socket = io(wsUrl, {
       path: wsPath,
@@ -196,9 +233,7 @@ export function useWebSocket(
       reconnection: true,
       reconnectionAttempts: 10,
       reconnectionDelay: 1000,
-      auth: optionsRef.current.shareToken
-        ? { shareToken: optionsRef.current.shareToken }
-        : undefined,
+      auth: shareToken ? { shareToken, ...anonIdentity } : undefined,
     });
 
     socket.on("connect", () => {
@@ -208,6 +243,9 @@ export function useWebSocket(
 
     // Identity event — server tells us our assigned userId/name
     socket.on("self:identity", (data: SelfIdentity) => {
+      if (anonIdentity && data.userId.startsWith("anon_")) {
+        saveAnonName(anonIdentity, data.name);
+      }
       optionsRef.current.onSelfIdentity?.(data);
     });
 

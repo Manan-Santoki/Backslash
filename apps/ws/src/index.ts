@@ -4,6 +4,7 @@ import IORedis from "ioredis";
 import postgres from "postgres";
 import { randomUUID } from "crypto";
 import { jwtVerify } from "jose";
+import generateRandomUsername from "generate-random-username";
 
 // ─── Shared Types (inlined to avoid monorepo build issues) ─
 
@@ -114,6 +115,25 @@ const PRESENCE_COLORS = [
   "#f5c2e7", // pink
   "#89dceb", // sky
 ];
+
+// Anonymous (public link) visitors keep a browser-generated id and the name the
+// server first gave them, so reconnects and reloads keep the same identity.
+const ANON_ID_PATTERN = /^[A-Za-z0-9-]{8,64}$/;
+const ANON_NAME_PATTERN = /^[A-Z][A-Za-z]{1,30} [A-Z][A-Za-z]{1,30}$/;
+
+function resolveAnonymousIdentity(auth: Record<string, unknown> | undefined): {
+  userId: string;
+  name: string;
+} {
+  const anonId = typeof auth?.anonId === "string" ? auth.anonId : "";
+  const anonName = typeof auth?.anonName === "string" ? auth.anonName : "";
+  return {
+    userId: `anon_${ANON_ID_PATTERN.test(anonId) ? anonId : randomUUID()}`,
+    name: ANON_NAME_PATTERN.test(anonName)
+      ? anonName
+      : generateRandomUsername({ separator: " ", capitalize: true }),
+  };
+}
 
 let colorIndex = 0;
 function nextColor(): string {
@@ -401,10 +421,10 @@ io.use(async (socket, next) => {
     }
 
     if (!token && shareToken) {
-      const visitorNum = Math.floor(1000 + Math.random() * 9000);
-      socket.data.userId = `anon_${randomUUID()}`;
+      const anon = resolveAnonymousIdentity(socket.handshake.auth);
+      socket.data.userId = anon.userId;
       socket.data.email = "anonymous@public-link";
-      socket.data.name = `Visitor ${visitorNum}`;
+      socket.data.name = anon.name;
       socket.data.color = nextColor();
       socket.data.isAnonymous = true;
       socket.data.shareToken = shareToken;
@@ -417,10 +437,10 @@ io.use(async (socket, next) => {
 
     const user = await validateSession(token);
     if (!user && shareToken) {
-      const visitorNum = Math.floor(1000 + Math.random() * 9000);
-      socket.data.userId = `anon_${randomUUID()}`;
+      const anon = resolveAnonymousIdentity(socket.handshake.auth);
+      socket.data.userId = anon.userId;
       socket.data.email = "anonymous@public-link";
-      socket.data.name = `Visitor ${visitorNum}`;
+      socket.data.name = anon.name;
       socket.data.color = nextColor();
       socket.data.isAnonymous = true;
       socket.data.shareToken = shareToken;

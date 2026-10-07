@@ -10,15 +10,16 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "cors": "^2.8.5",
+    "generate-random-username": "^2.2.0",
     "ioredis": "^5.4.0",
     "jose": "^5.10.0",
     "postgres": "^3.4.0",
-    "socket.io": "^4.8.0",
-    "cors": "^2.8.5"
+    "socket.io": "^4.8.0"
   },
   "devDependencies": {
-    "@types/node": "^22.0.0",
     "@types/cors": "^2.8.0",
+    "@types/node": "^22.0.0",
     "tsx": "^4.0.0",
     "typescript": "^5.7.0"
   }
