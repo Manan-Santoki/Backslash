@@ -66,6 +66,7 @@ export const updateProjectSchema = z.object({
   description: z.string().max(1000).optional(),
   engine: z.enum(["auto", "pdflatex", "xelatex", "lualatex", "latex"]).optional(),
   mainFile: z.string().max(500).optional(),
+  shareAi: z.boolean().optional(),
 });
 
 export const createFileSchema = z.object({

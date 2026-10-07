@@ -2,7 +2,7 @@ import { withAuth } from "@/lib/auth/middleware";
 import { db } from "@/lib/db";
 import { builds, projectFiles } from "@/lib/db/schema";
 import { checkProjectAccess } from "@/lib/db/queries/projects";
-import { getUserAiSettings } from "@/lib/ai/settings";
+import { resolveProjectAiModel } from "@/lib/ai/settings";
 import { completeWithTools, type AgentMessage } from "@/lib/ai/agent/llm";
 import { agentTools, executeAgentTool, type AgentToolContext } from "@/lib/ai/agent/tools";
 import { demoDisabledResponse, isFeatureDisabled } from "@/lib/demo";
@@ -71,8 +71,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
-    const aiSettings = await getUserAiSettings(user.id);
-    if (!aiSettings.enabled) {
+    const aiModel = await resolveProjectAiModel(
+      user.id,
+      access.project,
+      access.role,
+      "latexWriter"
+    );
+    if (!aiModel.enabled) {
       return NextResponse.json(
         { error: "AI features are disabled in your settings" },
         { status: 403 }
@@ -180,7 +185,7 @@ export async function POST(request: NextRequest) {
             if (abort.signal.aborted) break;
 
             const completion = await completeWithTools({
-              modelSettings: aiSettings.latexWriter,
+              modelSettings: aiModel.modelSettings,
               systemPrompt,
               messages: history,
               tools: agentTools,

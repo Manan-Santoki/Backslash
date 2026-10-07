@@ -106,6 +106,7 @@ export const projects = pgTable(
     mainFile: varchar("main_file", { length: 500 })
       .default("main.tex")
       .notNull(),
+    shareAi: boolean("share_ai").default(false).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

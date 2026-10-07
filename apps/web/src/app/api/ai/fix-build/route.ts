@@ -4,7 +4,7 @@ import { builds, projectFiles } from "@/lib/db/schema";
 import { checkProjectAccess } from "@/lib/db/queries/projects";
 import { parseLatexLog } from "@/lib/compiler/logParser";
 import { completeStrictJson } from "@/lib/ai/client";
-import { getUserAiSettings } from "@/lib/ai/settings";
+import { resolveProjectAiModel } from "@/lib/ai/settings";
 import { validateFilePath } from "@/lib/utils/validation";
 import * as storage from "@/lib/storage";
 import { desc, eq } from "drizzle-orm";
@@ -174,8 +174,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Permission denied" }, { status: 403 });
     }
 
-    const aiSettings = await getUserAiSettings(user.id);
-    if (!aiSettings.enabled) {
+    const aiModel = await resolveProjectAiModel(
+      user.id,
+      access.project,
+      access.role,
+      "buildFix"
+    );
+    if (!aiModel.enabled) {
       return NextResponse.json(
         { error: "AI features are disabled in your settings" },
         { status: 403 }
@@ -284,7 +289,7 @@ export async function POST(request: NextRequest) {
     let aiPayload: unknown;
     try {
       aiPayload = await completeStrictJson({
-        modelSettings: aiSettings.buildFix,
+        modelSettings: aiModel.modelSettings,
         systemPrompt,
         userPrompt,
         temperature: 0.1,

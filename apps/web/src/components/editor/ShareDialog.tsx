@@ -15,6 +15,7 @@ import {
   Link2,
   Copy,
   Check,
+  Sparkles,
 } from "lucide-react";
 import { cn } from "@/lib/utils/cn";
 import {
@@ -99,16 +100,25 @@ export function ShareDialog({
   const [updatingPublic, setUpdatingPublic] = useState(false);
   const [copiedPublicUrl, setCopiedPublicUrl] = useState(false);
 
+  const [shareAi, setShareAi] = useState(false);
+  const [updatingShareAi, setUpdatingShareAi] = useState(false);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
   const fetchCollaborators = useCallback(async () => {
     setLoading(true);
     try {
-      const [collabRes, publicRes] = await Promise.all([
+      const [collabRes, publicRes, projectRes] = await Promise.all([
         fetch(`/api/projects/${projectId}/collaborators`, { cache: "no-store" }),
         fetch(`/api/projects/${projectId}/share-link`, { cache: "no-store" }),
+        fetch(`/api/projects/${projectId}`, { cache: "no-store" }),
       ]);
+
+      if (projectRes.ok) {
+        const data = await projectRes.json();
+        setShareAi(Boolean(data.project?.shareAi));
+      }
 
       if (collabRes.ok) {
         const data = await collabRes.json();
@@ -260,6 +270,38 @@ export function ShareDialog({
       setError("Failed to update link sharing");
     } finally {
       setUpdatingPublic(false);
+    }
+  }
+
+  async function handleShareAiToggle() {
+    const next = !shareAi;
+    setError("");
+    setSuccess("");
+    setUpdatingShareAi(true);
+    setShareAi(next);
+
+    try {
+      const res = await fetch(`/api/projects/${projectId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ shareAi: next }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        setShareAi(!next);
+        setError(data.error || "Failed to update AI sharing");
+        return;
+      }
+      setSuccess(
+        next
+          ? "Editors can now use your AI on this project"
+          : "Editors now need their own AI settings"
+      );
+    } catch {
+      setShareAi(!next);
+      setError("Failed to update AI sharing");
+    } finally {
+      setUpdatingShareAi(false);
     }
   }
 
@@ -479,6 +521,50 @@ export function ShareDialog({
                   </div>
                 </div>
               )}
+            </div>
+
+            <div className="mb-5 rounded-xl border border-border bg-bg-secondary/40 p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="h-4 w-4 text-accent" />
+                    <p className="text-sm font-semibold text-text-primary">
+                      Share my AI with editors
+                    </p>
+                    {updatingShareAi && (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin text-text-muted" />
+                    )}
+                  </div>
+                  <p className="mt-1 text-xs text-text-muted">
+                    Editors without their own AI key use your AI settings on this
+                    project. Their usage is billed to your key.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={shareAi}
+                  aria-label="Toggle sharing AI with editors"
+                  onClick={handleShareAiToggle}
+                  disabled={updatingShareAi}
+                  className={cn(
+                    "relative inline-flex h-6 w-11 shrink-0 items-center rounded-md border transition-colors disabled:opacity-60",
+                    shareAi
+                      ? "border-accent/70 bg-accent/25"
+                      : "border-border bg-bg-tertiary"
+                  )}
+                >
+                  <span
+                    className={cn(
+                      "inline-block h-5 w-5 rounded-sm transition-all",
+                      shareAi
+                        ? "translate-x-5 bg-accent shadow-sm shadow-accent/30"
+                        : "translate-x-0.5 bg-bg-primary"
+                    )}
+                  />
+                </button>
+              </div>
             </div>
           </>
         )}

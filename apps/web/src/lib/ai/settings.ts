@@ -224,3 +224,48 @@ export function resolveAiBaseUrl(modelSettings: AiModelSettings): string {
       return "";
   }
 }
+
+function hasUsableCredentials(modelSettings: AiModelSettings): boolean {
+  return Boolean(resolveAiApiKey(modelSettings) && resolveAiBaseUrl(modelSettings));
+}
+
+export interface ProjectAiModel {
+  enabled: boolean;
+  modelSettings: AiModelSettings;
+  source: "self" | "owner";
+}
+
+/**
+ * Picks the model settings for an AI request on a project. Editors use their
+ * own settings, falling back to the owner's when they have no usable key and
+ * the owner shares their AI on this project.
+ */
+export async function resolveProjectAiModel(
+  userId: string,
+  project: { userId: string; shareAi: boolean },
+  role: "owner" | "editor" | "viewer",
+  purpose: AiPurpose
+): Promise<ProjectAiModel> {
+  const own = await getUserAiSettings(userId);
+  const ownResult: ProjectAiModel = {
+    enabled: own.enabled,
+    modelSettings: own[purpose],
+    source: "self",
+  };
+
+  if (
+    !own.enabled ||
+    role !== "editor" ||
+    !project.shareAi ||
+    hasUsableCredentials(own[purpose])
+  ) {
+    return ownResult;
+  }
+
+  const owner = await getUserAiSettings(project.userId);
+  if (owner.enabled && hasUsableCredentials(owner[purpose])) {
+    return { enabled: true, modelSettings: owner[purpose], source: "owner" };
+  }
+
+  return ownResult;
+}
