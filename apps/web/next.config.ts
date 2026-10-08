@@ -4,7 +4,7 @@ import path from "path";
 const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(__dirname, "../.."),
-  serverExternalPackages: ["dockerode", "bullmq", "ioredis"],
+  serverExternalPackages: ["dockerode", "bullmq", "ioredis", "unpdf"],
   webpack: (config) => {
     config.resolve.alias.canvas = false;
     return config;

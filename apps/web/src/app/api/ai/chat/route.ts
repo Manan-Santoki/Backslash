@@ -12,7 +12,7 @@ import { z } from "zod";
 
 export const dynamic = "force-dynamic";
 
-const MAX_STEPS = 40;
+const MAX_STEPS = 80;
 const HEARTBEAT_MS = 15_000;
 
 const requestSchema = z.object({
@@ -94,7 +94,11 @@ export async function POST(request: NextRequest) {
   const project = access.project;
 
   const files = await db
-    .select({ path: projectFiles.path, isDirectory: projectFiles.isDirectory })
+    .select({
+      path: projectFiles.path,
+      isDirectory: projectFiles.isDirectory,
+      sizeBytes: projectFiles.sizeBytes,
+    })
     .from(projectFiles)
     .where(eq(projectFiles.projectId, projectId))
     .orderBy(projectFiles.path);
@@ -108,7 +112,11 @@ export async function POST(request: NextRequest) {
 
   const fileList = files
     .slice(0, 300)
-    .map((file) => (file.isDirectory ? `${file.path}/` : file.path))
+    .map((file) =>
+      file.isDirectory
+        ? `${file.path}/`
+        : `${file.path} (${Math.max(1, Math.round((file.sizeBytes ?? 0) / 1024))} KB)`
+    )
     .join("\n");
 
   const systemPrompt = [
@@ -116,8 +124,13 @@ export async function POST(request: NextRequest) {
     "You work inside one project and can read, create, edit, move and delete its files and folders, compile it to PDF, read build logs and change project settings using the provided tools.",
     "",
     "How to work:",
-    "- Read the relevant files before editing them. Never guess file contents.",
-    "- Prefer edit_file with a small, exact oldString over rewriting whole files.",
+    "- Work like a careful engineer exploring a codebase: find what you need, read it, then act. Never guess file contents.",
+    "- Navigate before reading: use get_outline to see a file's (or the whole project's) sections, figures, tables and \\input/\\include structure with line numbers, then read_file only the line ranges you need. Use search_files (with contextLines and path) to locate specific text, labels, commands or citations across all files.",
+    "- read_file returns a window of lines and tells you when more remain. When a task covers a whole file or document (proofreading, summarizing, reviewing, consistency checks), keep reading consecutive ranges until you reach [End of file.], and follow every \\input/\\include into its file. Do not stop early or claim to have covered text you have not read.",
+    "- The document can span several files; the main file is the entry point. When a question is about the document as a whole, check the other .tex and .bib files it pulls in.",
+    "- Use read_pdf to see what the compiled document actually says (resolved references, citation numbers, page breaks) or to read a PDF the user uploaded. Always make changes in the source files.",
+    "- Prefer edit_file with a small, exact oldString over rewriting whole files. Use multi_edit to apply several fixes to one file in a single step.",
+    "- If a tool result looks garbled, abbreviated or has placeholders instead of text, re-read a smaller range rather than working from it.",
     "- After changing LaTeX, compile and fix any errors you introduced. Do not loop forever: stop after a few failed attempts and explain.",
     "- When moving or renaming files, update \\input, \\include, \\includegraphics, \\bibliography and similar references.",
     "- Only delete files when the user asked for it or it is clearly part of the requested reorganisation.",

@@ -370,7 +370,7 @@ export function AiAssistantPanel({
             <div>
               <p className="text-sm font-medium text-text-primary">Ask anything about this project</p>
               <p className="mt-1 text-xs text-text-muted">
-                I can read and edit files, organize folders, compile and fix errors.
+                I can explore, read and edit every file, read the compiled PDF, compile and fix errors.
               </p>
             </div>
             <div className="flex w-full flex-col gap-1.5">

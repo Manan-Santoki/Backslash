@@ -40,8 +40,14 @@ export interface AgentToolResult {
 }
 
 const ENGINES: Engine[] = ["auto", "pdflatex", "xelatex", "lualatex", "latex"];
-const MAX_READ_CHARS = 120_000;
+const MAX_READ_CHARS = 20_000;
+/** Default read window; the model pages through longer files with startLine. */
+const DEFAULT_READ_LINES = 200;
 const MAX_SEARCH_RESULTS = 100;
+const MAX_SEARCH_CONTEXT = 5;
+const MAX_OUTLINE_ENTRIES = 400;
+const DEFAULT_PDF_PAGES = 5;
+const MAX_PDF_CHARS = 25_000;
 const BUILD_WAIT_MS = 150_000;
 const TEXT_EXTENSIONS = new Set([
   ".tex", ".bib", ".cls", ".sty", ".bst", ".tikz", ".pgf", ".txt", ".md",
@@ -55,13 +61,24 @@ export const agentTools: AgentToolDefinition[] = [
   {
     name: "list_files",
     description:
-      "List every file and folder in the project with sizes. The main (entrypoint) file is marked.",
+      "List every file and folder in the project with sizes and line counts. The main (entrypoint) file is marked.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
   },
   {
-    name: "read_file",
+    name: "get_outline",
     description:
-      "Read a text file. Returns content with 1-based line numbers (\"12| text\"). Use startLine/endLine for large files.",
+      "Map the structure of a LaTeX file (or every .tex file when path is omitted): sections, abstract, figures, tables, captions, labels, \\input/\\include and bibliography, each with its line number, plus the file's total line count. Use it to find which line ranges to read.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Project-relative .tex path; omit for the whole project" },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "read_file",
+    description: `Read a text file. Returns content with 1-based line numbers ("12| text"). Without endLine, reads up to ${DEFAULT_READ_LINES} lines from startLine; the result says when more lines remain, so keep reading with startLine until you have covered what you need.`,
     parameters: {
       type: "object",
       properties: {
@@ -76,12 +93,19 @@ export const agentTools: AgentToolDefinition[] = [
   {
     name: "search_files",
     description:
-      "Search all text files for a string (case-insensitive) or a regular expression. Returns path:line: text matches.",
+      "Search text files for a string (case-insensitive) or a regular expression. Returns path:line: text matches, optionally with surrounding lines.",
     parameters: {
       type: "object",
       properties: {
         query: { type: "string" },
         regex: { type: "boolean", description: "Treat query as a JavaScript regular expression" },
+        path: { type: "string", description: "Only search this file, or files inside this folder" },
+        contextLines: {
+          type: "integer",
+          minimum: 0,
+          maximum: MAX_SEARCH_CONTEXT,
+          description: "Lines of context to show before and after each match",
+        },
       },
       required: ["query"],
       additionalProperties: false,
@@ -114,6 +138,33 @@ export const agentTools: AgentToolDefinition[] = [
         replaceAll: { type: "boolean" },
       },
       required: ["path", "oldString", "newString"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "multi_edit",
+    description:
+      "Apply several exact-string replacements to one file in order, all or nothing. Each edit follows the edit_file rules and sees the result of the previous edits. Use it for proofreading fixes and other batches of small changes.",
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        edits: {
+          type: "array",
+          minItems: 1,
+          items: {
+            type: "object",
+            properties: {
+              oldString: { type: "string" },
+              newString: { type: "string" },
+              replaceAll: { type: "boolean" },
+            },
+            required: ["oldString", "newString"],
+            additionalProperties: false,
+          },
+        },
+      },
+      required: ["path", "edits"],
       additionalProperties: false,
     },
   },
@@ -166,6 +217,19 @@ export const agentTools: AgentToolDefinition[] = [
     name: "get_pdf_info",
     description: "Check whether a compiled PDF exists and get its page count, size and age.",
     parameters: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "read_pdf",
+    description: `Extract the text of a PDF, page by page. Defaults to the compiled output of the main file; pass path to read a PDF stored in the project. Without endPage, reads up to ${DEFAULT_PDF_PAGES} pages from startPage. Use it to check what the rendered document says (resolved references, citations, numbering); edit the .tex sources, not the PDF.`,
+    parameters: {
+      type: "object",
+      properties: {
+        path: { type: "string", description: "Project-relative .pdf path; omit for the compiled output" },
+        startPage: { type: "integer", minimum: 1 },
+        endPage: { type: "integer", minimum: 1 },
+      },
+      additionalProperties: false,
+    },
   },
   {
     name: "get_project_settings",
@@ -398,6 +462,99 @@ function requireEditor(ctx: AgentToolContext) {
   if (ctx.role === "viewer") throw new ToolError("Viewers cannot modify this project");
 }
 
+function countLines(content: string): number {
+  return content ? content.split(/\r?\n/).length : 0;
+}
+
+/** Applies one exact-string replacement to LF-normalized content. */
+function applyEdit(
+  content: string,
+  filePath: string,
+  edit: Record<string, unknown>,
+  label = "oldString"
+): { next: string; occurrences: number } {
+  if (typeof edit.oldString !== "string") throw new ToolError(`${label} must be a string`);
+  if (typeof edit.newString !== "string") throw new ToolError(`${label}: newString must be a string`);
+  const oldString = edit.oldString.replace(/\r\n/g, "\n");
+  const newString = edit.newString.replace(/\r\n/g, "\n");
+  if (!oldString) throw new ToolError(`${label} must not be empty; use write_file to create files`);
+
+  const occurrences = content.split(oldString).length - 1;
+  if (occurrences === 0) {
+    throw new ToolError(
+      `${label} was not found in ${filePath}. Re-read the file and copy the text exactly (without line-number prefixes).`
+    );
+  }
+  if (occurrences > 1 && edit.replaceAll !== true) {
+    throw new ToolError(
+      `${label} matches ${occurrences} places in ${filePath}. Include more surrounding text or set replaceAll.`
+    );
+  }
+  const next =
+    edit.replaceAll === true
+      ? content.split(oldString).join(newString)
+      : content.replace(oldString, () => newString);
+  return { next, occurrences };
+}
+
+/** Reads a file for editing; matching happens on LF-normalized text. */
+async function readForEdit(ctx: AgentToolContext, filePath: string) {
+  const file = await requireFile(ctx.project.id, filePath);
+  if (file.isDirectory) throw new ToolError(`"${filePath}" is a folder`);
+  const raw = await readText(ctx, file);
+  return { eol: raw.includes("\r\n") ? "\r\n" : "\n", content: raw.replace(/\r\n/g, "\n") };
+}
+
+const OUTLINE_PATTERNS: RegExp[] = [
+  /\\(part|chapter|section|subsection|subsubsection|paragraph)\*?\s*[[{]/,
+  /\\begin\{(document|abstract|figure\*?|table\*?|algorithm\*?|thebibliography|appendices|appendix)\}/,
+  /\\end\{document\}/,
+  /\\(appendix|maketitle|tableofcontents|printbibliography)\b/,
+  /\\(caption|label)\s*[[{]/,
+  /\\(input|include|subfile|import)\s*\{/,
+  /\\(bibliography|addbibresource)\s*\{/,
+];
+
+/** Structural lines of a LaTeX source, numbered, skipping comments. */
+function outlineEntries(content: string): string[] {
+  const entries: string[] = [];
+  const lines = content.split(/\r?\n/);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line || line.startsWith("%")) continue;
+    if (OUTLINE_PATTERNS.some((pattern) => pattern.test(line))) {
+      entries.push(`${i + 1}| ${line.slice(0, 160)}`);
+    }
+  }
+  return entries;
+}
+
+async function loadPdf(ctx: AgentToolContext, pdfArg: unknown) {
+  let pdfPath: string;
+  let label: string;
+  if (pdfArg === undefined) {
+    pdfPath = storage.getPdfPath(ctx.project.userId, ctx.project.id, ctx.project.mainFile);
+    label = ctx.project.mainFile.replace(/\.tex$/, ".pdf");
+    if (!(await storage.fileExists(pdfPath))) {
+      throw new ToolError("No compiled PDF exists yet for the current main file. Use compile first.");
+    }
+  } else {
+    label = normalizePath(pdfArg);
+    if (path.extname(label).toLowerCase() !== ".pdf") throw new ToolError(`"${label}" is not a .pdf file`);
+    await requireFile(ctx.project.id, label);
+    pdfPath = path.join(storage.getProjectDir(ctx.project.userId, ctx.project.id), label);
+  }
+  const buffer = await storage.readFileBinary(pdfPath);
+  const { getDocumentProxy } = await import("unpdf");
+  try {
+    return { label, buffer, pdf: await getDocumentProxy(new Uint8Array(buffer)) };
+  } catch (error) {
+    throw new ToolError(
+      `Could not open ${label}: ${error instanceof Error ? error.message : "invalid PDF"}`
+    );
+  }
+}
+
 // ─── Tool implementations ──────────────────────────
 
 type ToolHandler = (
@@ -409,42 +566,129 @@ const handlers: Record<string, ToolHandler> = {
   async list_files(ctx) {
     const files = await listProjectFiles(ctx.project.id);
     if (files.length === 0) return { output: "The project is empty.", summary: "Listed files" };
-    const lines = files.map((file) => {
-      if (file.isDirectory) return `${file.path}/`;
+    const lines: string[] = [];
+    for (const file of files) {
+      if (file.isDirectory) {
+        lines.push(`${file.path}/`);
+        continue;
+      }
       const main = file.path === ctx.project.mainFile ? "  [main]" : "";
-      return `${file.path}  (${formatSize(file.sizeBytes ?? 0)})${main}`;
-    });
+      const lineCount = isTextFile(file) ? `, ${countLines(await readText(ctx, file))} lines` : "";
+      lines.push(`${file.path}  (${formatSize(file.sizeBytes ?? 0)}${lineCount})${main}`);
+    }
     return { output: lines.join("\n"), summary: `Listed ${files.length} entries` };
+  },
+
+  async get_outline(ctx, args) {
+    let targets: ProjectFileRow[];
+    if (args.path !== undefined) {
+      const file = await requireFile(ctx.project.id, normalizePath(args.path));
+      if (file.isDirectory) throw new ToolError(`"${file.path}" is a folder`);
+      targets = [file];
+    } else {
+      targets = (await listProjectFiles(ctx.project.id)).filter(
+        (file) => !file.isDirectory && path.extname(file.path).toLowerCase() === ".tex"
+      );
+      // Main file first: it is where the document starts.
+      targets.sort((a, b) => Number(b.path === ctx.project.mainFile) - Number(a.path === ctx.project.mainFile));
+    }
+    if (targets.length === 0) return { output: "No .tex files in the project.", summary: "No outline" };
+
+    const sections: string[] = [];
+    let total = 0;
+    for (const file of targets) {
+      const content = await readText(ctx, file);
+      const entries = outlineEntries(content);
+      const room = MAX_OUTLINE_ENTRIES - total;
+      const shown = entries.slice(0, Math.max(0, room));
+      total += shown.length;
+      const main = file.path === ctx.project.mainFile ? " [main]" : "";
+      sections.push(
+        [
+          `== ${file.path}${main} (${countLines(content)} lines)`,
+          shown.length ? shown.join("\n") : "(no structural commands)",
+          entries.length > shown.length
+            ? `[${entries.length - shown.length} more entries; call get_outline with path to see them]`
+            : "",
+        ]
+          .filter(Boolean)
+          .join("\n")
+      );
+    }
+    return {
+      output: sections.join("\n\n"),
+      summary: targets.length === 1 ? `Outlined ${targets[0].path}` : `Outlined ${targets.length} files`,
+    };
   },
 
   async read_file(ctx, args) {
     const filePath = normalizePath(args.path);
     const file = await requireFile(ctx.project.id, filePath);
     if (file.isDirectory) throw new ToolError(`"${filePath}" is a folder; use list_files`);
+    if (path.extname(filePath).toLowerCase() === ".pdf") {
+      throw new ToolError(`"${filePath}" is a PDF; use read_pdf with path "${filePath}"`);
+    }
     const lines = (await readText(ctx, file)).split(/\r?\n/);
     const start = Math.max(1, Number(args.startLine) || 1);
-    const end = Math.min(lines.length, Number(args.endLine) || lines.length);
+    if (start > lines.length) {
+      throw new ToolError(`${filePath} has only ${lines.length} lines`);
+    }
+    const end = Math.min(
+      lines.length,
+      Number(args.endLine) || start + DEFAULT_READ_LINES - 1
+    );
     let numbered = "";
     let lastLine = start - 1;
     for (let i = start; i <= end; i++) {
       const next = `${i}| ${lines[i - 1]}\n`;
-      if (numbered.length + next.length > MAX_READ_CHARS) break;
-      numbered += next;
+      if (numbered && numbered.length + next.length > MAX_READ_CHARS) break;
+      // A single overlong line is cut rather than skipped, so reads always advance.
+      numbered += next.length > MAX_READ_CHARS ? `${next.slice(0, MAX_READ_CHARS)}… [line truncated]\n` : next;
       lastLine = i;
     }
-    const truncated =
+    const header = `${filePath}: lines ${start}-${lastLine} of ${lines.length}\n`;
+    const more =
       lastLine < lines.length
-        ? `\n[Showing lines ${start}-${lastLine} of ${lines.length}. Use startLine to read more.]`
-        : "";
+        ? `\n[${lines.length - lastLine} more lines. Continue with startLine ${lastLine + 1}.]`
+        : "\n[End of file.]";
     return {
-      output: (numbered || "(empty file)") + truncated,
-      summary: `Read ${filePath}`,
+      output: header + (numbered || "(empty file)\n") + more,
+      summary: `Read ${filePath}${start > 1 || lastLine < lines.length ? ` (lines ${start}-${lastLine})` : ""}`,
+    };
+  },
+
+  async read_pdf(ctx, args) {
+    const { label, pdf } = await loadPdf(ctx, args.path);
+    const totalPages = pdf.numPages;
+    const start = Math.max(1, Number(args.startPage) || 1);
+    if (start > totalPages) throw new ToolError(`${label} has only ${totalPages} pages`);
+    const end = Math.min(totalPages, Number(args.endPage) || start + DEFAULT_PDF_PAGES - 1);
+
+    const { extractText } = await import("unpdf");
+    const { text } = await extractText(pdf, { mergePages: false });
+    let output = "";
+    let lastPage = start - 1;
+    for (let page = start; page <= end; page++) {
+      const next = `--- Page ${page} ---\n${(text[page - 1] ?? "").trim()}\n\n`;
+      if (output && output.length + next.length > MAX_PDF_CHARS) break;
+      output += next.slice(0, MAX_PDF_CHARS);
+      lastPage = page;
+    }
+    const more =
+      lastPage < totalPages
+        ? `[${totalPages - lastPage} more pages. Continue with startPage ${lastPage + 1}.]`
+        : "[End of PDF.]";
+    return {
+      output: `${label}: pages ${start}-${lastPage} of ${totalPages}\n\n${output}${more}`,
+      summary: `Read ${label} (pages ${start}-${lastPage} of ${totalPages})`,
     };
   },
 
   async search_files(ctx, args) {
     const query = requireString(args, "query");
     if (!query) throw new ToolError("query is required");
+    const scope = args.path === undefined ? null : normalizePath(args.path);
+    const context = Math.min(MAX_SEARCH_CONTEXT, Math.max(0, Number(args.contextLines) || 0));
     let matcher: (line: string) => boolean;
     if (args.regex === true) {
       let pattern: RegExp;
@@ -459,18 +703,36 @@ const handlers: Record<string, ToolHandler> = {
       matcher = (line) => line.toLowerCase().includes(needle);
     }
 
-    const files = (await listProjectFiles(ctx.project.id)).filter(isTextFile);
-    const results: string[] = [];
+    const files = (await listProjectFiles(ctx.project.id)).filter(
+      (file) => isTextFile(file) && (!scope || file.path === scope || file.path.startsWith(`${scope}/`))
+    );
+    if (scope && files.length === 0) throw new ToolError(`No text files at "${scope}"`);
+
+    const blocks: string[] = [];
+    let matches = 0;
     for (const file of files) {
-      if (results.length >= MAX_SEARCH_RESULTS) break;
+      if (matches >= MAX_SEARCH_RESULTS) break;
       const lines = (await readText(ctx, file)).split(/\r?\n/);
-      for (let i = 0; i < lines.length && results.length < MAX_SEARCH_RESULTS; i++) {
-        if (matcher(lines[i])) results.push(`${file.path}:${i + 1}: ${lines[i].slice(0, 300)}`);
+      for (let i = 0; i < lines.length && matches < MAX_SEARCH_RESULTS; i++) {
+        if (!matcher(lines[i])) continue;
+        matches++;
+        if (context === 0) {
+          blocks.push(`${file.path}:${i + 1}: ${lines[i].slice(0, 300)}`);
+          continue;
+        }
+        const from = Math.max(0, i - context);
+        const to = Math.min(lines.length - 1, i + context);
+        const block = [];
+        for (let j = from; j <= to; j++) {
+          block.push(`${file.path}:${j + 1}${j === i ? ":" : "-"} ${lines[j].slice(0, 300)}`);
+        }
+        blocks.push(block.join("\n"));
       }
     }
+    const capped = matches >= MAX_SEARCH_RESULTS ? `\n[Stopped at ${MAX_SEARCH_RESULTS} matches; narrow the query or path.]` : "";
     return {
-      output: results.length ? results.join("\n") : "No matches.",
-      summary: `Searched for "${query.slice(0, 40)}" (${results.length} matches)`,
+      output: blocks.length ? blocks.join(context ? "\n--\n" : "\n") + capped : "No matches.",
+      summary: `Searched for "${query.slice(0, 40)}" (${matches} matches)`,
     };
   },
 
@@ -492,34 +754,36 @@ const handlers: Record<string, ToolHandler> = {
     const filePath = normalizePath(args.path);
     // Match on LF-normalized text so CRLF files can be edited, then restore
     // the file's original line endings when writing.
-    const oldString = requireString(args, "oldString").replace(/\r\n/g, "\n");
-    const newString = requireString(args, "newString").replace(/\r\n/g, "\n");
-    if (!oldString) throw new ToolError("oldString must not be empty; use write_file to create files");
-
-    const file = await requireFile(ctx.project.id, filePath);
-    if (file.isDirectory) throw new ToolError(`"${filePath}" is a folder`);
-    const raw = await readText(ctx, file);
-    const eol = raw.includes("\r\n") ? "\r\n" : "\n";
-    const content = raw.replace(/\r\n/g, "\n");
-    const occurrences = content.split(oldString).length - 1;
-    if (occurrences === 0) {
-      throw new ToolError(
-        `oldString was not found in ${filePath}. Re-read the file and copy the text exactly (without line-number prefixes).`
-      );
-    }
-    if (occurrences > 1 && args.replaceAll !== true) {
-      throw new ToolError(
-        `oldString matches ${occurrences} places in ${filePath}. Include more surrounding text or set replaceAll.`
-      );
-    }
-    const next =
-      args.replaceAll === true
-        ? content.split(oldString).join(newString)
-        : content.replace(oldString, () => newString);
+    const { eol, content } = await readForEdit(ctx, filePath);
+    const { next, occurrences } = applyEdit(content, filePath, args);
     await writeText(ctx, filePath, eol === "\n" ? next : next.replace(/\n/g, eol));
     return {
       output: `Edited ${filePath} (${occurrences} replacement${occurrences > 1 ? "s" : ""}).`,
       summary: `Edited ${filePath}`,
+      changedPaths: [filePath],
+    };
+  },
+
+  async multi_edit(ctx, args) {
+    requireEditor(ctx);
+    const filePath = normalizePath(args.path);
+    if (!Array.isArray(args.edits) || args.edits.length === 0) {
+      throw new ToolError("edits must be a non-empty array");
+    }
+    const { eol, content: original } = await readForEdit(ctx, filePath);
+    let content = original;
+    let replacements = 0;
+    // Nothing is written unless every edit applies.
+    args.edits.forEach((edit: unknown, index: number) => {
+      if (!edit || typeof edit !== "object") throw new ToolError(`edits[${index}] must be an object`);
+      const result = applyEdit(content, filePath, edit as Record<string, unknown>, `edits[${index}].oldString`);
+      content = result.next;
+      replacements += result.occurrences;
+    });
+    await writeText(ctx, filePath, eol === "\n" ? content : content.replace(/\n/g, eol));
+    return {
+      output: `Applied ${args.edits.length} edits to ${filePath} (${replacements} replacements).`,
+      summary: `Edited ${filePath} (${args.edits.length} changes)`,
       changedPaths: [filePath],
     };
   },
@@ -717,9 +981,8 @@ const handlers: Record<string, ToolHandler> = {
     if (!(await storage.fileExists(pdfPath))) {
       return { output: "No compiled PDF exists yet for the current main file.", summary: "No PDF yet" };
     }
-    const buffer = await storage.readFileBinary(pdfPath);
-    // Page objects are "/Type /Page" (not "/Pages"); good enough for a count.
-    const pages = (buffer.toString("latin1").match(/\/Type\s*\/Page(?![a-z])/g) ?? []).length;
+    const { buffer, pdf } = await loadPdf(ctx, undefined);
+    const pages = pdf.numPages;
     const [latest] = await db
       .select({ status: builds.status, completedAt: builds.completedAt })
       .from(builds)
